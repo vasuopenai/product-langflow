@@ -15,6 +15,7 @@ import json
 import os
 import sqlite3
 
+from ._env import load_dotenv
 from .query import QuerySpec, to_sql
 from .store import build
 
@@ -29,7 +30,16 @@ def _print_record(r, similarity=None):
     )
 
 
+def _spec(arg):
+    """JSON text, or @path to a JSON file (avoids shell quoting, e.g. in PowerShell)."""
+    if arg.startswith("@"):
+        with open(arg[1:], encoding="utf-8") as f:
+            return QuerySpec.from_dict(json.load(f))
+    return QuerySpec.from_dict(json.loads(arg))
+
+
 def main():
+    load_dotenv()
     ap = argparse.ArgumentParser(prog="off_products")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -42,7 +52,7 @@ def main():
 
     q = sub.add_parser("query", help="run a QuerySpec (JSON) against the SQLite store")
     q.add_argument("db")
-    q.add_argument("spec")
+    q.add_argument("spec", help="QuerySpec JSON, or @file.json")
 
     dsn = dict(default=os.getenv("DATABASE_URL"), help="Postgres URL (default: $DATABASE_URL)")
     emb = dict(choices=["openai", "fake"], default=os.getenv("OFF_EMBEDDER", "openai"),
@@ -62,7 +72,7 @@ def main():
                     help="build an HNSW index after loading (needs pgvector >= 0.8 for filtered search)")
 
     ps = sub.add_parser("pg-search", help="run a QuerySpec (JSON) against Postgres")
-    ps.add_argument("spec")
+    ps.add_argument("spec", help="QuerySpec JSON, or @file.json")
     ps.add_argument("--dsn", **dsn)
     ps.add_argument("--embedder", **emb)
 
@@ -78,7 +88,7 @@ def main():
         seen, kept = build(args.src, args.db, args.country, args.min_completeness, args.jsonl_out)
         print(f"read {seen} products, kept {kept}")
     elif args.cmd == "query":
-        sql, params = to_sql(QuerySpec.from_dict(json.loads(args.spec)))
+        sql, params = to_sql(_spec(args.spec))
         for _, _, _, record in sqlite3.connect(args.db).execute(sql, params):
             _print_record(json.loads(record))
     else:
@@ -100,7 +110,7 @@ def main():
                     create_vector_index(conn)
                 print("HNSW index built")
         elif args.cmd == "pg-search":
-            spec = QuerySpec.from_dict(json.loads(args.spec))
+            spec = _spec(args.spec)
             vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None
             with psycopg.connect(args.dsn) as conn:
                 for r in search(conn, spec, vector):

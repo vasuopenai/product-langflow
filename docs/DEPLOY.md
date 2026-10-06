@@ -7,6 +7,9 @@ Open Food Facts Parquet ──pg-load──▶ Postgres + pgvector ◀── API
                          (normalize, embed)                     (OpenAI: parse question, write answer)
 ```
 
+**On Windows, or to keep everything on your laptop:** follow
+[WINDOWS_LOCAL.md](WINDOWS_LOCAL.md) instead of steps 1–7. It is the same flow in PowerShell.
+
 Run the steps in order. Each one ends with a check, so you know it worked
 before moving on. Steps 1–3 cost nothing and need no API key.
 

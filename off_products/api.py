@@ -10,10 +10,12 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from ._env import load_dotenv
 from .ask import ask, _facts
 from .pg import make_embedder, search
 from .query import QuerySpec
 
+load_dotenv()
 app = FastAPI(title="Open Food Facts product search")
 _embedder = None
 

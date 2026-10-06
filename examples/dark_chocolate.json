@@ -1,0 +1,4 @@
+{
+  "semantic_query": "dark chocolate",
+  "ingredient_amounts": [{"ingredient": "en:cocoa-mass", "basis": "percent", "op": ">", "value": 70}]
+}

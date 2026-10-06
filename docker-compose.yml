@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: off
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]   # local machine only
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -19,7 +19,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/off
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OFF_EMBEDDER: ${OFF_EMBEDDER:-openai}
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]   # local machine only
     depends_on:
       db: {condition: service_healthy}
 volumes:
