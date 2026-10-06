@@ -161,24 +161,27 @@ def _check_groups(groups):
         raise ValueError(f"unknown ingredient groups {sorted(unknown)}")
 
 
-def to_sql(spec: QuerySpec):
-    """Compile to SQLite against the schema written by store.py.
+def build_where(spec: QuerySpec, ph="?"):
+    """Return (where_clauses, params) over the ``products p`` / ``product_tags`` /
+    ``product_ingredients`` schema. ``ph`` is the driver's placeholder
+    ("?" for sqlite3, "%s" for psycopg).
 
-    Returns (sql, params). Rows missing a constrained value are excluded:
-    a product with unknown protein can't be said to have >= 20 g.
+    Rows missing a constrained value are excluded: a product with unknown
+    protein can't be said to have >= 20 g.
     """
     where, params = ["p.obsolete = 0"], []
 
     def has_tag(kind, tags, negate=False, all_=False):
         if not tags:
             return
-        q = "SELECT 1 FROM product_tags t WHERE t.code = p.code AND t.kind = ? AND t.tag IN ({})"
+        q = (f"SELECT 1 FROM product_tags t WHERE t.code = p.code AND t.kind = {ph} "
+             "AND t.tag IN ({})")
         if all_:
             for tag in tags:
-                where.append(f"EXISTS ({q.format('?')})")
+                where.append(f"EXISTS ({q.format(ph)})")
                 params.extend([kind, tag])
             return
-        where.append(("NOT " if negate else "") + f"EXISTS ({q.format(','.join('?' * len(tags)))})")
+        where.append(("NOT " if negate else "") + f"EXISTS ({q.format(','.join([ph] * len(tags)))})")
         params.extend([kind, *tags])
 
     _check_groups(spec.exclude_groups + spec.include_groups)
@@ -191,7 +194,7 @@ def to_sql(spec: QuerySpec):
     has_tag("allergen", spec.exclude_allergens, negate=True)
     has_tag("country", spec.countries_any)
     for c in spec.nutrients:
-        where.append(f"p.{_nutrient_column(c)} {c['op']} ?")
+        where.append(f"p.{_nutrient_column(c)} {c['op']} {ph}")
         params.append(c["value"])
     for a in spec.ingredient_amounts:
         if a["basis"] not in AMOUNT_BASES:
@@ -200,21 +203,30 @@ def to_sql(spec: QuerySpec):
         declared = " AND i.declared = 1" if a.get("declared_only") else ""
         where.append(
             "EXISTS (SELECT 1 FROM product_ingredients i WHERE i.code = p.code "
-            f"AND i.ingredient = ? AND i.{a['basis']} {a['op']} ?{declared})"
+            f"AND i.ingredient = {ph} AND i.{a['basis']} {a['op']} {ph}{declared})"
         )
         params.extend([a["ingredient"], a["value"]])
     if spec.first_ingredient_any:
-        where.append(f"p.first_ingredient IN ({','.join('?' * len(spec.first_ingredient_any))})")
+        where.append(f"p.first_ingredient IN ({','.join([ph] * len(spec.first_ingredient_any))})")
         params.extend(spec.first_ingredient_any)
     if spec.max_ingredients is not None:
-        where.append("p.ingredients_n <= ?")
+        where.append(f"p.ingredients_n <= {ph}")
         params.append(spec.max_ingredients)
     if spec.max_nova_group is not None:
-        where.append("p.nova_group <= ?")
+        where.append(f"p.nova_group <= {ph}")
         params.append(spec.max_nova_group)
+    return where, params
 
-    order = [_SORT_SQL[spec.sort_by]] if spec.sort_by in _SORT_SQL else []
-    order.append("p.unique_scans_n DESC")
+
+def order_by(spec: QuerySpec):
+    """Explicit sort first; callers append similarity and popularity tie-breaks."""
+    return [_SORT_SQL[spec.sort_by]] if spec.sort_by in _SORT_SQL else []
+
+
+def to_sql(spec: QuerySpec):
+    """Compile to SQLite against the schema written by store.py. Returns (sql, params)."""
+    where, params = build_where(spec)
+    order = order_by(spec) + ["p.unique_scans_n DESC"]
     sql = (
         "SELECT p.code, p.name, p.brand, p.record FROM products p WHERE "
         + " AND ".join(where)

@@ -3,4 +3,5 @@ Natural-language food product search over Open Food Facts.
 - Design: docs/open-food-facts-product-representation.md (OFF data formats, the product
   representation, and the query pipeline)
 - Reference code: off_products/ (normalize OFF JSONL/Parquet, ingredient groups, QuerySpec -> SQL/Pinecone)
+- Deploy and test, step by step: docs/DEPLOY.md
 - Tests: python -m pytest tests

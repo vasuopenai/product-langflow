@@ -1,0 +1,6 @@
+psycopg[binary]>=3.1
+openai>=1.40
+pyarrow>=15
+fastapi>=0.110
+uvicorn>=0.29
+pytest>=8
