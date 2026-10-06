@@ -8,6 +8,33 @@ All commands are **PowerShell**, run from the repository folder.
 
 ---
 
+## Let Claude Code run these steps for you
+
+The repo includes a Claude Code skill (`.claude/skills/local-setup`) that runs
+the steps below. It checks each result, fixes local problems, and stops to ask
+before anything that costs money or deletes data.
+
+```powershell
+irm https://claude.ai/install.ps1 | iex        # install Claude Code (once)
+cd product-langflow
+claude                                         # sign in on first run
+```
+
+Then, inside Claude Code:
+
+```
+/local-setup smoke      # install + tests + offline smoke test (free)
+/local-setup small      # 5,000 real products + checks example answers (asks before spending)
+/local-setup full       # full load (asks first, after reporting the small load's cost)
+/local-setup api        # start the API and test it
+/local-setup verify     # re-check answer quality on examples/questions.txt
+```
+
+You still create `.env` and paste your OpenAI key yourself (step 1). Claude is
+blocked from reading `.env` by `.claude/settings.json`.
+
+---
+
 ## 0. Install once
 
 | Tool | Where | Notes |

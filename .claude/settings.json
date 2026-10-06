@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python --version)",
+      "Bash(python -m venv .venv)",
+      "Bash(git --version)",
+      "Bash(docker version)",
+      "Bash(docker compose up -d db)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose exec -T db pg_isready *)",
+      "Bash(.venv/Scripts/python -m pip install -r requirements.txt)",
+      "Bash(.venv/bin/python -m pip install -r requirements.txt)",
+      "Bash(.venv/Scripts/python -m pytest *)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(OFF_TEST_DATABASE_URL=* .venv/Scripts/python -m pytest *)",
+      "Bash(OFF_TEST_DATABASE_URL=* .venv/bin/python -m pytest *)",
+      "Bash(.venv/Scripts/python -m off_products pg-search * --embedder fake)",
+      "Bash(.venv/bin/python -m off_products pg-search * --embedder fake)",
+      "Bash(.venv/Scripts/python -m off_products pg-load tests/fixtures/sample_products.jsonl --embedder fake)",
+      "Bash(.venv/bin/python -m off_products pg-load tests/fixtures/sample_products.jsonl --embedder fake)",
+      "Bash(curl -s localhost:8000/health)"
+    ],
+    "ask": [
+      "Bash(.venv/Scripts/python -m off_products ask *)",
+      "Bash(.venv/bin/python -m off_products ask *)",
+      "Bash(.venv/Scripts/python -m off_products pg-load data/*)",
+      "Bash(.venv/bin/python -m off_products pg-load data/*)",
+      "Bash(docker compose down *)",
+      "Bash(*DROP TABLE*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(cat .env*)",
+      "Bash(type .env*)",
+      "Bash(git add .env*)"
+    ]
+  }
+}
