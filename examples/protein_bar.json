@@ -1,0 +1,6 @@
+{
+  "semantic_query": "protein bar",
+  "categories_any": ["en:protein-bars"],
+  "nutrients": [{"nutrient": "protein_g", "basis": "serving", "op": ">=", "value": 20}],
+  "exclude_groups": ["seed_oils"]
+}
