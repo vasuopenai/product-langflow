@@ -198,11 +198,32 @@ def delete_products(conn, codes):
     conn.commit()
 
 
+def iter_records(src, source="off", countries=None, min_completeness=0.0, off_parquet=None,
+                 progress=print):
+    """Canonical records from either source. ``usda``: ``src`` is the unzipped
+    FoodData Central branded CSV directory; ``off_parquet`` optionally adds the
+    fields USDA lacks (labels, image, NOVA, popularity) by barcode."""
+    if source == "usda":
+        from . import usda
+
+        for raw in usda.iter_usda(src, off_parquet, progress):
+            r = usda.normalize(raw)
+            if r["name"] and (not countries or set(countries) & set(r["countries"])):
+                yield r
+        return
+    for raw in iter_raw(src):
+        r = normalize(raw)
+        if keep(r, countries, min_completeness):
+            yield r
+
+
 def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=500,
-         limit=None, require_ingredients=True, require_nutrition=True, progress=print):
-    """Stream an OFF export into Postgres. Returns (read, loaded).
+         limit=None, require_ingredients=True, require_nutrition=True, progress=print,
+         source="off", off_parquet=None):
+    """Stream products into Postgres. Returns (read, loaded).
 
     Re-running is cheap: unchanged products reuse their stored embeddings."""
+    records = iter_records(src, source, countries, min_completeness, off_parquet, progress)
     with psycopg.connect(dsn) as conn:
         init_schema(conn, embedder.dim)
         batch, rejected, seen, kept, embedded = [], [], 0, 0, 0
@@ -217,11 +238,8 @@ def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=50
                 delete_products(conn, rejected)
                 rejected.clear()
 
-        for raw in iter_raw(src):
+        for r in records:
             seen += 1
-            r = normalize(raw)
-            if not keep(r, countries, min_completeness):
-                continue
             if require_ingredients and not r["ingredients"]["items"]:
                 continue
             if require_nutrition and r["nutrition"]["per_100g"]["energy_kcal"] is None:

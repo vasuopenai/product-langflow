@@ -1,0 +1,8 @@
+"fdc_id","brand_owner","brand_name","subbrand_name","gtin_upc","ingredients","serving_size","serving_size_unit","household_serving_fulltext","branded_food_category","package_weight","market_country","discontinued_date","available_date","modified_date"
+"1001","COASTLINE FOODS INC.","COASTLINE","","012345678905","POTATOES, EXPELLER PRESSED AVOCADO OIL, SEA SALT.","28","g","1 ONZ","Chips, Pretzels & Snacks","","United States","","2025-01-10","2025-01-10"
+"1002","COASTLINE FOODS INC.","COASTLINE","","012345678912","POTATOES, CANOLA AND/OR SUNFLOWER OIL, SALT.","28","g","1 ONZ","Chips, Pretzels & Snacks","","United States","","2025-01-10","2025-01-10"
+"1003","TRAILHEAD NUTRITION LLC","TRAILHEAD","","0098765432109","PROTEIN BLEND (WHEY PROTEIN ISOLATE, MILK PROTEIN ISOLATE), ALMONDS, HONEY, CHICORY ROOT FIBER, COCOA, SEA SALT, NATURAL FLAVOR. CONTAINS: MILK, ALMONDS.","60","g","1 BAR (60 g)","Snack, Energy & Granola Bars","","United States","","2025-03-01","2025-03-01"
+"0903","TRAILHEAD NUTRITION LLC","TRAILHEAD","","98765432109","PROTEIN BLEND (SOY PROTEIN ISOLATE), CORN SYRUP.","60","g","1 BAR","Snack, Energy & Granola Bars","","United States","","2021-06-01","2021-06-01"
+"1004","OLD SNACKS CO","OLD SNACKS","","011111111111","WHEAT FLOUR, PALM OIL, SALT.","30","g","5 CRACKERS","Crackers & Biscotti","","United States","2024-02-01","2020-01-01","2020-01-01"
+"1005","BAD DATA CO","BAD DATA","","022222222222","BEEF, SUGAR, SALT.","28","g","1 ONZ","Other Meats","","United States","","2025-01-01","2025-01-01"
+"1006","RIDGE CHOCOLATE CO","RIDGE","","033333333333","CHOCOLATE LIQUOR, SUGAR, COCOA BUTTER, VANILLA BEANS.","40","g","4 PIECES (40 g)","Chocolate","","United States","","2025-02-01","2025-02-01"

@@ -6,6 +6,7 @@ import os
 from .concepts import GROUPS
 from .pg import known_tags, search
 from .query import QUERY_SPEC_SCHEMA, QuerySpec
+from .usda import CATEGORY_IDS
 
 CHAT_MODEL = os.getenv("OFF_CHAT_MODEL", "gpt-4o")
 
@@ -14,16 +15,20 @@ PARSE_PROMPT = """You turn shopping questions about packaged food into a search_
 Rules:
 - Every hard requirement goes into a filter field. Only flavour/style/product-type wording
   goes into semantic_query (always fill it).
-- Use Open Food Facts taxonomy ids, English, lowercase, hyphenated, "en:" prefix:
-  categories like en:protein-bars, en:potato-crisps, en:dark-chocolates, en:breakfast-cereals,
-  en:yogurts (granola and muesli -> en:breakfast-cereals; "snacks" -> en:snacks);
-  ingredients like en:avocado-oil,
-  en:olive-oil, en:cocoa, en:almond, en:oat.
-- Ids are singular and specific. "Nuts" as a first ingredient -> first_ingredient_any with
-  en:almond, en:roasted-almonds, en:peanut, en:roasted-peanuts, en:cashew-nuts, en:pecan-nut,
-  en:walnut, en:pistachio-nuts, en:macadamia-nut, en:hazelnut, en:brazil-nut, en:nut.
+- categories_any uses exactly these ids (pick the closest; several are fine):
+  {categories}.
+  Examples: protein bars and granola bars -> cat:snack-bars; potato chips -> cat:chips-pretzels;
+  granola, muesli, oatmeal -> cat:cereal; "snacks" in general -> cat:snacks.
+- Ingredient ids are the ingredient name in English, singular, lowercase, hyphenated, with
+  an "en:" prefix and without qualifiers like organic/roasted/expeller pressed:
+  en:avocado-oil, en:olive-oil, en:soybean-oil, en:almond, en:oat, en:whole-milk.
+  Cocoa solids (cocoa, cacao, chocolate liquor) are en:cocoa.
+- "Nuts" as a first ingredient -> first_ingredient_any with en:almond, en:peanut, en:cashew,
+  en:pecan, en:walnut, en:pistachio, en:macadamia-nut, en:hazelnut, en:brazil-nut, en:mixed-nut.
 - Label claims -> labels_all: gluten-free -> en:no-gluten, organic -> en:organic,
-  vegan -> en:vegan, non-GMO -> en:no-gmos, kosher -> en:kosher.
+  vegan / plant-based -> en:vegan, non-GMO -> en:no-gmos, keto -> en:keto, kosher -> en:kosher.
+- Allergens -> exclude_allergens: en:milk, en:eggs, en:fish, en:crustaceans, en:nuts (tree nuts),
+  en:peanuts, en:gluten (wheat), en:soybeans, en:sesame-seeds.
 - "per bar / per bag / per serving / in a bar" -> basis "serving". "per 100 g" or no unit
   context for densities -> basis "100g". If unclear for single-serve snacks use "serving".
 - "without X" for a whole family -> exclude_groups. Available groups: {groups}.
@@ -68,7 +73,7 @@ def parse_question(question, client=None, model=CHAT_MODEL):
         temperature=0,
         seed=SEED,
         messages=[
-            {"role": "system", "content": PARSE_PROMPT.format(groups=", ".join(GROUPS))},
+            {"role": "system", "content": PARSE_PROMPT.format(groups=", ".join(GROUPS), categories=", ".join(CATEGORY_IDS))},
             {"role": "user", "content": question},
         ],
         tools=[{"type": "function", "function": QUERY_SPEC_SCHEMA}],

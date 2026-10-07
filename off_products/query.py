@@ -38,8 +38,8 @@ QUERY_SPEC_SCHEMA = {
     "description": (
         "Search Open Food Facts products. Put every hard requirement in a filter "
         "field; put the remaining descriptive intent (flavour, style, product type) "
-        "in semantic_query. Category and ingredient values are Open Food Facts "
-        "taxonomy ids such as en:protein-bars, en:potato-crisps, en:avocado-oil, en:cocoa. "
+        "in semantic_query. Category and ingredient values are "
+        "ids such as cat:snack-bars, cat:chips-pretzels (categories) and en:avocado-oil, en:cocoa (ingredients). "
         "Nutrient amounts: use basis 'serving' when the user talks about a bar, bag, "
         "can or serving, and '100g' for densities or percentages."
     ),

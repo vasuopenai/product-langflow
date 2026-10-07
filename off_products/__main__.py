@@ -6,6 +6,7 @@ Local SQLite (no services needed):
 
 Postgres + pgvector (DATABASE_URL, OPENAI_API_KEY):
   python -m off_products pg-load food.parquet --country en:united-states
+  python -m off_products pg-load data/usda --source usda --off-enrich data/food.parquet
   python -m off_products pg-search '{"semantic_query": "protein bar", ...}'
   python -m off_products ask "protein bar with at least 20 g protein and no seed oils"
 """
@@ -65,7 +66,11 @@ def main():
                help="'fake' = offline hashed embeddings for smoke tests")
 
     pl = sub.add_parser("pg-load", help="normalize, embed and load into Postgres")
-    pl.add_argument("src")
+    pl.add_argument("src", help="OFF .jsonl/.parquet file, or the unzipped USDA branded CSV directory")
+    pl.add_argument("--source", choices=["off", "usda"], default="off",
+                    help="usda: FoodData Central Branded Foods (USDA is the source of truth)")
+    pl.add_argument("--off-enrich", metavar="FOOD_PARQUET",
+                    help="with --source usda: add labels, image, NOVA and popularity from OFF by barcode")
     pl.add_argument("--dsn", **dsn)
     pl.add_argument("--embedder", **emb)
     pl.add_argument("--country", action="append")
@@ -109,6 +114,7 @@ def main():
             seen, kept = load(
                 args.src, args.dsn, embedder, args.country, args.min_completeness,
                 args.batch_size, args.limit, not args.keep_incomplete, not args.keep_incomplete,
+                source=args.source, off_parquet=args.off_enrich,
             )
             print(f"read {seen} products, loaded {kept}")
             if args.hnsw:
