@@ -29,6 +29,12 @@ def test_nested_ingredients_minor_clause_and_allergen_statement():
     assert ing["first"] == "en:wheat-flour" and ing["count_top_level"] == 5
 
 
+def test_leading_conjunctions_and_nutrient_amounts_are_not_ingredients():
+    assert ids("POTATOES, AVOCADO OIL, AND HIMALAYAN SEA SALT")[-1] == ("en:himalayan-sea-salt", 0)
+    assert ids("WHEAT FLOUR (CONTAINS NIACIN 75 MG/KG), RED 40") == [
+        ("en:wheat-flour", 0), ("en:niacin", 1), ("en:red-40", 0)]
+
+
 def test_qualifiers_plurals_synonyms_and_and_or():
     assert ingredient_id("EXPELLER PRESSED AVOCADO OIL") == "en:avocado-oil"
     assert ingredient_id("DRY ROASTED ALMONDS") == "en:almond"
@@ -82,7 +88,7 @@ def test_nutrition_per_serving_and_units():
 
 def test_loader_keeps_latest_current_record_per_gtin():
     records = {r["code"]: r for r in iter_records(SAMPLE, source="usda", progress=lambda *_: None)}
-    assert len(records) == 5  # old bar record replaced, discontinued crackers dropped
+    assert len(records) == 6  # old bar record replaced, discontinued crackers dropped
     bar = records["0098765432109"]
     assert bar["name"] == "Chocolate Almond Protein Bar" and bar["brand"] == "Trailhead"
     assert bar["allergens"] == ["en:milk", "en:nuts"]
@@ -102,14 +108,17 @@ def test_usda_load_and_search():
         for t in ("products", "product_tags", "product_ingredients"):
             c.execute(f"DROP TABLE IF EXISTS {t}")
     seen, kept = load(SAMPLE, DSN, HashEmbedder(), source="usda", progress=lambda *_: None)
-    assert (seen, kept) == (5, 4)  # the implausible jerky is not loaded
+    assert (seen, kept) == (6, 5)  # the implausible jerky is not loaded
 
     def codes(**spec):
         with psycopg.connect(DSN) as conn:
             return [r["code"] for r in search(conn, QuerySpec.from_dict(spec))]
 
+    # Two barcodes (bag sizes) of the same chips come back once.
     assert codes(categories_any=["cat:chips-pretzels"], include_ingredients_all=["en:avocado-oil"]) \
         == ["012345678905"]
+    assert "0098765432109" not in codes(categories_any=["cat:snacks"], max_serving_g=30)  # 60 g bar
+    assert "0098765432109" in codes(categories_any=["cat:snacks"], max_serving_g=100)
     assert codes(categories_any=["cat:chips-pretzels"], exclude_groups=["seed_oils"]) == ["012345678905"]
     assert codes(categories_any=["cat:snack-bars"], exclude_allergens=["en:peanuts"],
                  nutrients=[{"nutrient": "protein_g", "basis": "serving", "op": ">=", "value": 20}]) \

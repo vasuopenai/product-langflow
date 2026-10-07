@@ -106,6 +106,8 @@ _FUNCTION_NOTE = re.compile(
     r"(?:to|for)\s+(?:preserve|maintain|retain|protect|promote|prevent|help|freshness|colou?r|flavou?r)\b.*|"
     r"added\s+(?:to|for|as)\b.*|for\s+\w+(?:\s+\w+)?)$", re.I)
 _FOOTNOTES = re.compile(r"[*†‡^®™]+")
+_LEADING_WORD = re.compile(r"^(?:and|&|contains|including|with)\s+", re.I)
+_AMOUNT = re.compile(r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|ug|g|iu|ppm)(?:\s*/\s*(?:kg|100\s*g|g))?(?!\w)", re.I)
 _OPEN, _CLOSE = "([{", ")]}"
 _MINOR_MARK = "\x00minor:"
 
@@ -252,6 +254,9 @@ def _parse_level(text, depth, items):
         if inner and _FUNCTION_NOTE.match(inner.strip()):  # "(PRESERVATIVE)" is not an ingredient
             inner = ""
         head = head.strip(" .:-")
+        # "..., AND SEA SALT" / "CONTAINS NIACIN 75 MG/KG": keep only the ingredient name.
+        head = _LEADING_WORD.sub("", head)
+        head = " ".join(_AMOUNT.sub(" ", head).split()).strip(" .:-")
         if not head:
             if inner:
                 _parse_level(inner, depth, items)

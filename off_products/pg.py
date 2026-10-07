@@ -284,11 +284,29 @@ def search(conn, spec: QuerySpec, query_vector=None):
                 conn.execute("SET LOCAL hnsw.iterative_scan = 'relaxed_order'")
         except psycopg.Error:
             pass  # pgvector < 0.8: no iterative scan; exact scan still correct
-        rows = conn.execute(sql, sim_params + params + params_order + [spec.limit]).fetchall()
-    return [
-        {**(rec if isinstance(rec, dict) else json.loads(rec)), "similarity": sim}
-        for _, rec, sim in rows
-    ]
+        # Fetch extra rows: the same product often has several barcodes (pack sizes).
+        rows = conn.execute(sql, sim_params + params + params_order
+                            + [spec.limit * DUPLICATE_HEADROOM]).fetchall()
+    out, seen = [], set()
+    for _, rec, sim in rows:
+        rec = rec if isinstance(rec, dict) else json.loads(rec)
+        key = _product_key(rec)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({**rec, "similarity": sim})
+        if len(out) == spec.limit:
+            break
+    return out
+
+
+DUPLICATE_HEADROOM = 4
+
+
+def _product_key(rec):
+    """Same brand and name = same product for the shopper, whatever the pack size."""
+    norm = lambda s: " ".join(re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).split())
+    return (norm(rec.get("brand")), norm(rec.get("name"))) if rec.get("name") else rec["code"]
 
 
 def known_tags(conn, kind, tags):

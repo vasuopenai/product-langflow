@@ -37,6 +37,11 @@ Rules:
   sort_by "ingredients_n" unless another sort is asked for.
 - "high protein" without a number -> protein_g serving >= 15 (bars, snacks) and
   sort_by "protein_g_serving".
+- Comparison words set op: "more than / over / above" -> ">", "at least / minimum / no less
+  than" -> ">=", "less than / under / below" -> "<", "at most / no more than" -> "<=".
+- Snacks (cat:snacks and the snack categories) ranked or filtered per serving: add
+  max_serving_g 100 so family packs and meals don't win, unless the user asks for
+  large portions, packs or meals.
 - Ingredient quantities ("70% cocoa", "at least 5 g almonds") -> ingredient_amounts.
   Set declared_only only if the user says the amount must be stated on the label.
 - Do not invent constraints the user did not ask for.
@@ -46,8 +51,9 @@ ANSWER_PROMPT = """You recommend packaged food products using ONLY the products 
 Every product listed satisfies the database filters in "filters". Those filters are the
 only requirements that were checked. If the question asks for something that is not in
 "filters", or that "notes" says was ignored or relaxed, do not claim the products meet
-it: say plainly that it was not verified. The products are already ranked: list every one
-of them, numbered, in the order given; do not skip, reorder or add any. For each give, in
+it: say plainly that it was not verified. The products are already ranked by the search
+(each has a "rank"): list every one of them, numbered by that rank, in that order, even if
+another order would look more natural; do not skip, re-sort or add any. For each give, in
 this order: name and brand, the numbers that answer the question (say per serving or per
 100 g, and the serving size), and the ingredient facts that matter. If an ingredient
 percentage is an estimate rather than declared on the label, say "estimated".
@@ -108,14 +114,19 @@ def retrieve(conn, spec, embedder):
     return results, notes
 
 
+def _round(name, value):
+    """Label-style precision: whole kcal and mg, one decimal for grams."""
+    return round(value) if name in ("energy_kcal", "sodium_mg") else round(value, 1)
+
+
 def _facts(r):
     serv, per100 = r["nutrition"]["per_serving"], r["nutrition"]["per_100g"]
     keep = ("energy_kcal", "protein_g", "fat_g", "carbs_g", "sugars_g", "fiber_g", "sodium_mg")
     return {
         "name": r["name"], "brand": r["brand"], "code": r["code"], "url": r["url"],
         "serving_size": r["nutrition"]["serving_size"],
-        "per_serving": {k: serv.get(k) for k in keep if serv.get(k) is not None},
-        "per_100g": {k: per100.get(k) for k in keep if per100.get(k) is not None},
+        "per_serving": {k: _round(k, serv.get(k)) for k in keep if serv.get(k) is not None},
+        "per_100g": {k: _round(k, per100.get(k)) for k in keep if per100.get(k) is not None},
         "ingredients": (r["ingredients"]["text"] or "")[:500],
         "ingredient_count": r["ingredients"]["count_total"],
         "ingredient_amounts": [
@@ -138,7 +149,7 @@ def applied_filters(spec):
 def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None):
     client = client or _client()
     payload = {"question": question, "filters": filters or {}, "notes": notes,
-               "products": [_facts(r) for r in results[:ANSWER_TOP_N]]}
+               "products": [{"rank": i, **_facts(r)} for i, r in enumerate(results[:ANSWER_TOP_N], 1)]}
     resp = client.chat.completions.create(
         model=model,
         temperature=0,

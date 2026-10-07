@@ -15,6 +15,10 @@ PRODUCTS = [
     ("1001", "012345678905", "COASTLINE FOODS INC.", "COASTLINE", "AVOCADO OIL SEA SALT KETTLE CHIPS",
      "POTATOES, EXPELLER PRESSED AVOCADO OIL, SEA SALT.", "28", "1 ONZ", "Chips, Pretzels & Snacks", "",
      "2025-01-10", {"1008": 536, "1003": 7.1, "1004": 32.1, "1005": 53.6, "2000": 0, "1079": 3.6, "1093": 268}),
+    # Same chips in a family-size bag: another barcode, same product for the shopper.
+    ("1007", "012345678929", "COASTLINE FOODS INC.", "COASTLINE", "AVOCADO OIL SEA SALT KETTLE CHIPS",
+     "POTATOES, EXPELLER PRESSED AVOCADO OIL, AND SEA SALT.", "28", "1 ONZ", "Chips, Pretzels & Snacks", "",
+     "2025-01-10", {"1008": 536, "1003": 7.1, "1004": 32.1, "1005": 53.6, "2000": 0, "1079": 3.6, "1093": 268}),
     ("1002", "012345678912", "COASTLINE FOODS INC.", "COASTLINE", "CLASSIC POTATO CHIPS",
      "POTATOES, CANOLA AND/OR SUNFLOWER OIL, SALT.", "28", "1 ONZ", "Chips, Pretzels & Snacks", "",
      "2025-01-10", {"1008": 536, "1003": 7.1, "1004": 32.1, "1005": 53.6, "2000": 0, "1079": 3.6, "1093": 500}),
