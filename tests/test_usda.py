@@ -76,6 +76,25 @@ def test_product_key_merges_spelling_variants_but_not_flavors():
         key(rec("Meal Replacement Bar, Super Cookie Crunch", "Met-rx"))
     assert key(rec("Potato Chips, Sea Salt", "Kettle")) != key(rec("Potato Chips, Himalayan Salt", "Kettle"))
     assert key(rec("Bar", "Kettle")) != key(rec("Bar", "Clif"))
+    assert key(rec("Vanilla Almond Protein Bars, Vanilla Almond", "Clif")) == \
+        key(rec("Vanilla Almond Protein Bar, Vanilla; Almond", "Clif"))
+
+
+def test_recipe_key_catches_same_product_under_two_names():
+    from off_products.pg import _recipe_key as key
+    rec = lambda name, protein=28: {
+        "code": "1", "name": name, "brand": "Met-rx",
+        "ingredients": {"text": "PROTEIN BLEND (SOY PROTEIN ISOLATE), HONEY, DATES."},
+        "nutrition": {"per_100g": {"energy_kcal": 375, "protein_g": protein, "fat_g": 10, "carbs_g": 45}}}
+    assert key(rec("Brownie Bars, Chocolate Chip Blondie")) == \
+        key(rec("High Protein Brownie Bars, Chocolate Chip Blondie"))
+    assert key(rec("Brownie Bars", protein=35)) != key(rec("Brownie Bars"))  # reformulated
+    assert key({"code": "2", "name": "x", "brand": None, "ingredients": {"text": "A"}}) is None
+
+
+def test_symbol_leftovers_are_removed_from_names():
+    from off_products.usda import _display
+    assert _display("HIGH PROTEIN BROWNIE[TILDE] BARS") == "High Protein Brownie Bars"
 
 
 def test_category_mapping():

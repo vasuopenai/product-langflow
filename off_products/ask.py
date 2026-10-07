@@ -37,6 +37,9 @@ Rules:
   sort_by "ingredients_n" unless another sort is asked for.
 - "high protein" without a number -> protein_g serving >= 15 (bars, snacks) and
   sort_by "protein_g_serving".
+- Sorting: use a nutrient sort_by only when the user asks for the most / highest / lowest
+  of it. A threshold alone ("at least 20 g protein") is a filter, not a sort: keep
+  sort_by "relevance" so the descriptive words (e.g. "breakfast") decide the order.
 - Comparison words set op: "more than / over / above" -> ">", "at least / minimum / no less
   than" -> ">=", "less than / under / below" -> "<", "at most / no more than" -> "<=".
 - Snacks (cat:snacks and the snack categories) ranked or filtered per serving: add
@@ -57,6 +60,9 @@ another order would look more natural; do not skip, re-sort or add any. For each
 this order: name and brand, the numbers that answer the question (say per serving or per
 100 g, and the serving size), and the ingredient facts that matter. If an ingredient
 percentage is an estimate rather than declared on the label, say "estimated".
+"ranking" says how the list was ordered: its "description" words (e.g. "breakfast",
+"crunchy") only ranked similar products higher and were not checked; if the question uses
+such words, say in one short line that they guided the ranking but were not verified.
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
 
@@ -146,9 +152,9 @@ def applied_filters(spec):
     return {k: v for k, v in spec.__dict__.items() if k not in skip and v not in ([], None)}
 
 
-def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None):
+def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None, ranking=None):
     client = client or _client()
-    payload = {"question": question, "filters": filters or {}, "notes": notes,
+    payload = {"question": question, "filters": filters or {}, "ranking": ranking or {}, "notes": notes,
                "products": [{"rank": i, **_facts(r)} for i, r in enumerate(results[:ANSWER_TOP_N], 1)]}
     resp = client.chat.completions.create(
         model=model,
@@ -173,5 +179,6 @@ def ask(conn, question, embedder, client=None):
         "spec": spec.__dict__,
         "notes": notes,
         "products": [_facts(r) for r in results],
-        "answer": answer(question, results, notes, client, filters=applied_filters(spec)),
+        "answer": answer(question, results, notes, client, filters=applied_filters(spec),
+                         ranking={"description": spec.semantic_query, "sort_by": spec.sort_by}),
     }

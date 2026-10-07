@@ -544,9 +544,12 @@ def _num(x):
     return f"{x:g}"
 
 
+_SYMBOL_LEFTOVERS = re.compile(r"\[(?:tilde|caret)\]", re.I)  # ™ / ® lost in USDA's export
+
+
 def _display(text):
     """USDA text is mostly ALL CAPS; show it in title case."""
-    text = " ".join((text or "").split())
+    text = " ".join(_SYMBOL_LEFTOVERS.sub("", text or "").split())
     return string.capwords(text.lower()) if text.isupper() else text or None
 
 

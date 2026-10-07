@@ -290,10 +290,10 @@ def search(conn, spec: QuerySpec, query_vector=None):
     out, seen = [], set()
     for _, rec, sim in rows:
         rec = rec if isinstance(rec, dict) else json.loads(rec)
-        key = _product_key(rec)
-        if key in seen:
+        keys = {_product_key(rec), _recipe_key(rec)} - {None}
+        if keys & seen:
             continue
-        seen.add(key)
+        seen |= keys
         out.append({**rec, "similarity": sim})
         if len(out) == spec.limit:
             break
@@ -301,6 +301,17 @@ def search(conn, spec: QuerySpec, query_vector=None):
 
 
 DUPLICATE_HEADROOM = 4
+
+
+def _recipe_key(rec):
+    """Same brand, ingredient list and nutrition = same product sold under two names
+    ("Brownie Bars, Chocolate Chip Blondie" / "High Protein Brownie Bars, ...")."""
+    text = " ".join(re.sub(r"[^a-z0-9]+", " ", ((rec.get("ingredients") or {}).get("text") or "").lower()).split())
+    if not text or not rec.get("brand"):
+        return None
+    per100 = (rec.get("nutrition") or {}).get("per_100g") or {}
+    numbers = tuple(round(per100.get(k) or 0) for k in ("energy_kcal", "protein_g", "fat_g", "carbs_g"))
+    return "recipe", rec["brand"].lower(), text, numbers
 
 
 def _product_key(rec):
@@ -315,7 +326,9 @@ def _product_key(rec):
 
     def words(s):
         s = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", (s or "").lower())
-        return re.sub(r"[^a-z0-9]+", " ", s).split()
+        # "Protein Bars" = "Protein Bar"
+        return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+                for w in re.sub(r"[^a-z0-9]+", " ", s).split()]
 
     head, _, variant = rec["name"].partition(",")
     name = words(head) if set(words(variant)) <= set(words(head)) else words(rec["name"])
