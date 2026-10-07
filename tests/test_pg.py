@@ -94,3 +94,18 @@ def test_ask_relaxes_empty_category(conn):
     out = ask(conn, "q", HashEmbedder(), FakeOpenAI(spec))
     assert [p["code"] for p in out["products"]] == ["0000000000021"]
     assert any("searched all categories" in n for n in out["notes"])
+
+
+def test_retailer_tags_and_info_in_postgres(conn):
+    from off_products.retail import link_to_store, retailer_info
+
+    parsed = {"price_promo": None, "aisle": "Aisle 3", "location_id": "01400943",
+              "fetched_at": "2026-10-07T00:00:00+00:00"}
+    rows = [{"store_code": "0000000000021", "product_id": "k1", "upc": "0001111041700",
+             "description": "Avocado chips", "size": "5 oz", "price_regular": 4.49, "_parsed": parsed}]
+    assert link_to_store(conn, rows, ph="%s") == 1
+    assert codes(conn, semantic_query="chips", retailers_any=["kroger"]) == ["0000000000021"]
+    info = retailer_info(conn, ["0000000000021"], ph="%s")
+    assert info["0000000000021"][0]["aisle"] == "Aisle 3"
+    conn.execute("DELETE FROM product_tags WHERE kind = 'retailer'")
+    conn.commit()

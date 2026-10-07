@@ -5,6 +5,7 @@ import os
 
 from .concepts import GROUPS
 from .pg import known_tags, search
+from .retail import retailer_info
 from .query import QUERY_SPEC_SCHEMA, QuerySpec
 
 CHAT_MODEL = os.getenv("OFF_CHAT_MODEL", "gpt-4o")
@@ -26,6 +27,7 @@ Rules:
 - "high protein" without a number -> protein_g serving >= 15 (bars, snacks) and
   sort_by "protein_g_serving".
 - Ingredient quantities ("70% cocoa", "at least 5 g almonds") -> ingredient_amounts.
+- "at Kroger" / "from Kroger" / "Kroger sells" -> retailers_any ["kroger"].
 - Do not invent constraints the user did not ask for.
 """
 
@@ -33,7 +35,8 @@ ANSWER_PROMPT = """You recommend packaged food products using ONLY the products 
 Every product listed already satisfies the user's hard requirements (they were filtered
 in a database). Recommend the best 3-5, and for each give: name and brand, the numbers
 that answer the question (say per serving or per 100 g, and the serving size), and the
-ingredient facts that matter. If an ingredient percentage is an estimate rather than
+ingredient facts that matter, and where it is sold with price and aisle when
+"retailers" is present (say the price date). If an ingredient percentage is an estimate rather than
 declared on the label, say "estimated". Mention any relaxed filters from the notes.
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
@@ -65,7 +68,8 @@ def ground_spec(conn, spec):
     """Drop taxonomy ids that don't occur in the data; return notes on what changed."""
     notes = []
     for field, kind in (("categories_any", "category"), ("include_ingredients_all", "ingredient"),
-                        ("first_ingredient_any", "ingredient"), ("labels_all", "label")):
+                        ("first_ingredient_any", "ingredient"), ("labels_all", "label"),
+                        ("retailers_any", "retailer")):
         wanted = getattr(spec, field)
         kept = known_tags(conn, kind, wanted)
         dropped = [t for t in wanted if t not in kept]
@@ -83,6 +87,9 @@ def retrieve(conn, spec, embedder):
         notes.append(f"no match in categories {spec.categories_any}; searched all categories")
         spec.categories_any = []
         results = search(conn, spec, vector)
+    stores = retailer_info(conn, [r["code"] for r in results], ph="%s")
+    for r in results:
+        r["retailers"] = stores.get(r["code"], [])
     return results, notes
 
 
@@ -103,6 +110,7 @@ def _facts(r):
         ],
         "groups": {g: v["status"] for g, v in r["derived"]["groups"].items() if v["status"] != "none"},
         "labels": r["labels"][:10],
+        "retailers": r.get("retailers", []),
     }
 
 

@@ -1,0 +1,32 @@
+# One Kroger product search per line. Each term returns at most ~250 products,
+# so specific terms cover more of the catalog. Edit freely.
+protein bar
+granola bar
+energy bar
+nut bar
+potato chips
+kettle chips
+tortilla chips
+veggie chips
+crackers
+pretzels
+popcorn
+dark chocolate
+milk chocolate
+cookies
+granola
+breakfast cereal
+oatmeal
+greek yogurt
+yogurt
+nut butter
+peanut butter
+almond butter
+trail mix
+jerky
+protein powder
+protein shake
+frozen pizza
+frozen meals
+pasta sauce
+salad dressing

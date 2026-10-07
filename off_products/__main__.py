@@ -8,6 +8,12 @@ Postgres + pgvector (DATABASE_URL, OPENAI_API_KEY):
   python -m off_products pg-load food.parquet --country en:united-states
   python -m off_products pg-search '{"semantic_query": "protein bar", ...}'
   python -m off_products ask "protein bar with at least 20 g protein and no seed oils"
+
+Kroger (KROGER_CLIENT_ID, KROGER_CLIENT_SECRET):
+  python -m off_products kroger-locations --zip 45202
+  python -m off_products kroger-crawl --location 01400943 --terms examples/kroger_terms.txt
+  python -m off_products usda-index path/to/FoodData_Central_branded_food_csv
+  python -m off_products kroger-match            # report + tag products sold at Kroger
 """
 
 import argparse
@@ -82,7 +88,30 @@ def main():
     a.add_argument("--embedder", **emb)
     a.add_argument("--json", action="store_true", help="print spec, products and answer as JSON")
 
+    kl = sub.add_parser("kroger-locations", help="find Kroger-family stores near a ZIP code")
+    kl.add_argument("--zip", required=True)
+
+    kc = sub.add_parser("kroger-crawl", help="resumable product crawl for one store")
+    kc.add_argument("--location", help="locationId from kroger-locations (needed for price/aisle)")
+    kc.add_argument("--terms", default="examples/kroger_terms.txt", help="file with one search term per line")
+    kc.add_argument("--out", default="data/kroger")
+    kc.add_argument("--max-calls", type=int, default=9000, help="daily call budget (public limit ~10,000)")
+
+    ui = sub.add_parser("usda-index", help="index your USDA branded-foods dump by barcode")
+    ui.add_argument("src", help="CSV folder with branded_food.csv, or the branded .json file")
+    ui.add_argument("--db", default="data/usda_index.db")
+
+    km = sub.add_parser("kroger-match", help="join Kroger crawl to USDA and the product store")
+    km.add_argument("--kroger", default="data/kroger/products.jsonl")
+    km.add_argument("--usda", default="data/usda_index.db", help="index from usda-index ('' to skip)")
+    km.add_argument("--report", default="data/kroger/coverage.csv")
+    km.add_argument("--dsn", default=os.getenv("DATABASE_URL"), help="Postgres store to tag (default $DATABASE_URL)")
+    km.add_argument("--sqlite", help="tag a SQLite store from `build` instead of Postgres")
+
     args = ap.parse_args()
+
+    if args.cmd.startswith(("kroger-", "usda-")):
+        return _retail_commands(args)
 
     if args.cmd == "build":
         seen, kept = build(args.src, args.db, args.country, args.min_completeness, args.jsonl_out)
@@ -128,6 +157,52 @@ def main():
                     print("Note:", note)
                 print()
                 print(result["answer"])
+
+
+def _retail_commands(args):
+    from pathlib import Path
+
+    if args.cmd == "kroger-locations":
+        from .kroger import KrogerClient
+
+        for loc in KrogerClient().locations(args.zip):
+            print(f"{loc['location_id']}  {loc['chain']:<10} {loc['name']} - {loc['address']}")
+    elif args.cmd == "kroger-crawl":
+        from .kroger import KrogerClient, crawl
+
+        terms = [t.strip() for t in Path(args.terms).read_text(encoding="utf-8").splitlines()
+                 if t.strip() and not t.startswith("#")]
+        client = KrogerClient()
+        n = crawl(client, terms, args.out, args.location, args.max_calls)
+        print(f"wrote {n} new products to {args.out}/products.jsonl ({client.calls} API calls this run)")
+    elif args.cmd == "usda-index":
+        from .usda import build_index
+
+        Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        read, unique = build_index(args.src, args.db)
+        print(f"read {read} USDA records, {unique} unique barcodes -> {args.db}")
+    else:
+        from .retail import link_to_store, match, store_keys, summarize, write_report
+
+        conn, ph = None, "?"
+        if args.sqlite:
+            conn = sqlite3.connect(args.sqlite)
+        elif args.dsn:
+            import psycopg
+
+            conn, ph = psycopg.connect(args.dsn), "%s"
+        keys = store_keys(conn) if conn else {}
+        rows = match(args.kroger, args.usda or None, keys)
+        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+        write_report(rows, args.report)
+        print(f"{'category':<40} {'total':>6} {'in store':>9} {'USDA ingr':>10} {'Kroger ingr':>12} {'any label':>10}")
+        for cat, c in summarize(rows).items():
+            print(f"{cat[:40]:<40} {c['total']:>6} {c['in_store']:>9} {c['usda_ingredients']:>10} "
+                  f"{c['kroger_ingredients']:>12} {c['any_label']:>10}")
+        print(f"report: {args.report}")
+        if conn:
+            print(f"tagged {link_to_store(conn, rows, ph)} store products as sold at Kroger")
+            conn.close()
 
 
 if __name__ == "__main__":
