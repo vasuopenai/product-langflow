@@ -198,9 +198,10 @@ def delete_products(conn, codes):
     conn.commit()
 
 
-def iter_stored_raw(dsn, progress=print, batch_size=2000):
-    """The USDA rows kept in each product's record (``record.source.raw``), read with a
-    server-side cursor so the whole table never sits in memory."""
+def iter_stored(dsn, progress=print, batch_size=2000):
+    """(USDA row, stored record) for every product that kept its row in
+    ``record.source.raw``, read with a server-side cursor so the whole table never
+    sits in memory."""
     with psycopg.connect(dsn) as conn:
         missing = conn.execute(
             "SELECT count(*) FROM products WHERE NOT (record->'source' ? 'raw')").fetchone()[0]
@@ -209,22 +210,42 @@ def iter_stored_raw(dsn, progress=print, batch_size=2000):
                      "they are left as they are - run a full pg-load once to include them")
         with conn.cursor(name="rederive") as cur:
             cur.itersize = batch_size
-            cur.execute("SELECT record->'source'->'raw' FROM products WHERE record->'source' ? 'raw'")
-            for (raw,) in cur:
-                yield raw if isinstance(raw, dict) else json.loads(raw)
+            cur.execute("SELECT record FROM products WHERE record->'source' ? 'raw'")
+            for (rec,) in cur:
+                rec = rec if isinstance(rec, dict) else json.loads(rec)
+                yield rec["source"]["raw"], rec
+
+
+def _rederived(dsn, progress):
+    """Re-apply the current rules to the stored rows; yield only products whose result
+    differs from what is stored, so a rule that touches a few products writes a few."""
+    from . import usda
+
+    seen = changed = 0
+    for raw, stored in iter_stored(dsn, progress):
+        seen += 1
+        r = usda.normalize(raw)
+        if json.loads(json.dumps(r)) != stored:  # compare as stored (JSON types)
+            changed += 1
+            yield r
+        if seen % 50000 == 0:
+            progress(f"checked {seen}, changed {changed}")
+    progress(f"checked {seen} stored products, {changed} changed")
 
 
 def iter_records(src, source="off", countries=None, min_completeness=0.0, off_parquet=None,
                  progress=print):
     """Canonical records from either source. ``usda``: ``src`` is the unzipped
     FoodData Central branded CSV directory; ``off_parquet`` optionally adds the
-    fields USDA lacks (labels, image, NOVA, popularity) by barcode."""
-    if source in ("usda", "stored"):
+    fields USDA lacks (labels, image, NOVA, popularity) by barcode. ``stored``:
+    ``src`` is the database itself (see ``pg-rederive``); only changed products."""
+    if source == "stored":
+        yield from _rederived(src, progress)
+        return
+    if source == "usda":
         from . import usda
 
-        raws = (iter_stored_raw(src, progress) if source == "stored"
-                else usda.iter_usda(src, off_parquet, progress))
-        for raw in raws:
+        for raw in usda.iter_usda(src, off_parquet, progress):
             r = usda.normalize(raw)
             if r["name"] and (not countries or set(countries) & set(r["countries"])):
                 yield r

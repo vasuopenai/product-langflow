@@ -196,8 +196,14 @@ def test_rederive_reapplies_rules_from_stored_rows_without_reembedding():
         c.execute("DELETE FROM product_tags WHERE code = '012345678905' AND kind = 'category'")
         assert c.execute("SELECT count(*) FROM products WHERE record->'source' ? 'raw'").fetchone()[0] == 5
 
+    # Nothing changed in the rules: nothing to write.
+    assert load(DSN, DSN, Counting(), source="stored", progress=lambda *_: None) == (0, 0)
+    with psycopg.connect(DSN, autocommit=True) as c:
+        # A stored record made by an older rule differs from what the rules give now.
+        c.execute("UPDATE products SET record = jsonb_set(record, '{categories}', '[\"cat:other\"]') "
+                  "WHERE code = '012345678905'")
     seen, kept = load(DSN, DSN, Counting(), source="stored", progress=lambda *_: None)
-    assert (seen, kept) == (5, 5) and Counting.texts == 0
+    assert (seen, kept) == (1, 1) and Counting.texts == 0
     with psycopg.connect(DSN) as c:
         tags = {t for (t,) in c.execute(
             "SELECT tag FROM product_tags WHERE code = '012345678905' AND kind = 'category'")}
