@@ -304,9 +304,22 @@ DUPLICATE_HEADROOM = 4
 
 
 def _product_key(rec):
-    """Same brand and name = same product for the shopper, whatever the pack size."""
-    norm = lambda s: " ".join(re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).split())
-    return (norm(rec.get("brand")), norm(rec.get("name"))) if rec.get("name") else rec["code"]
+    """Same brand and name = same product for the shopper, whatever the pack size.
+
+    USDA names are "<product>, <variant>"; a variant that only repeats words of the
+    product ("Intense Dark 72% Cacao Dark Chocolate, Intense Dark 72% Cacao") is
+    dropped; word order and spacing are ignored ("Meal Replacement Bar, Super Cookie
+    Crunch" = "Super Cookie Crunch Meal Replacement Bar", "Big100" = "Big 100")."""
+    if not rec.get("name"):
+        return rec["code"]
+
+    def words(s):
+        s = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", (s or "").lower())
+        return re.sub(r"[^a-z0-9]+", " ", s).split()
+
+    head, _, variant = rec["name"].partition(",")
+    name = words(head) if set(words(variant)) <= set(words(head)) else words(rec["name"])
+    return " ".join(words(rec.get("brand"))), " ".join(sorted(set(name)))
 
 
 def known_tags(conn, kind, tags):

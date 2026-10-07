@@ -65,6 +65,19 @@ def test_groups_from_label_text():
     assert classify_text([], False)["seed_oils"]["status"] == "unknown"
 
 
+def test_product_key_merges_spelling_variants_but_not_flavors():
+    from off_products.pg import _product_key as key
+    rec = lambda name, brand="Ghirardelli": {"code": "1", "name": name, "brand": brand}
+    assert key(rec("Intense Dark 72% Cacao Dark Chocolate, Intense Dark")) == \
+        key(rec("Intense Dark 72% Cacao Dark Chocolate, Intense Dark 72% Cacao"))
+    assert key(rec("Big100 Colossal Bar, Maple Bacon", "Met-rx")) == \
+        key(rec("Big 100 Colossal Bar, Maple Bacon", "Met-rx"))
+    assert key(rec("Super Cookie Crunch Meal Replacement Bar", "Met-rx")) == \
+        key(rec("Meal Replacement Bar, Super Cookie Crunch", "Met-rx"))
+    assert key(rec("Potato Chips, Sea Salt", "Kettle")) != key(rec("Potato Chips, Himalayan Salt", "Kettle"))
+    assert key(rec("Bar", "Kettle")) != key(rec("Bar", "Clif"))
+
+
 def test_category_mapping():
     assert categories("Chips, Pretzels & Snacks") == ["cat:chips-pretzels", "cat:snacks"]
     assert categories("Snack, Energy & Granola Bars") == ["cat:snack-bars", "cat:snacks"]

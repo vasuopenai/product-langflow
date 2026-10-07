@@ -16,7 +16,8 @@ services:
   api:
     build: .
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/off
+      # food: USDA Branded Foods (current); off: the earlier Open Food Facts load.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OFF_EMBEDDER: ${OFF_EMBEDDER:-openai}
     ports: ["127.0.0.1:8000:8000"]   # local machine only
