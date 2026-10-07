@@ -212,6 +212,24 @@ def test_answer_is_told_which_filters_ran():
     assert sent["filters"] == {"first_ingredient_any": ["en:almond"]}
 
 
+def test_answer_sees_a_fixed_ranked_slice_deterministically(records):
+    from types import SimpleNamespace
+
+    from off_products.ask import ANSWER_TOP_N, answer
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    ranked = sorted(records.values(), key=lambda r: r["code"])
+    answer("q", ranked, [], client)
+    sent = json.loads(calls[0]["messages"][-1]["content"])["products"]
+    assert [p["code"] for p in sent] == [r["code"] for r in ranked[:ANSWER_TOP_N]]
+    assert calls[0]["temperature"] == 0 and "seed" in calls[0]
+
+
 def test_parquet_row_shape():
     row = {
         "code": "42",

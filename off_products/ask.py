@@ -41,12 +41,18 @@ ANSWER_PROMPT = """You recommend packaged food products using ONLY the products 
 Every product listed satisfies the database filters in "filters". Those filters are the
 only requirements that were checked. If the question asks for something that is not in
 "filters", or that "notes" says was ignored or relaxed, do not claim the products meet
-it: say plainly that it was not verified. Recommend the best 3-5, and for each give: name
-and brand, the numbers that answer the question (say per serving or per 100 g, and the
-serving size), and the ingredient facts that matter. If an ingredient percentage is an
-estimate rather than declared on the label, say "estimated".
+it: say plainly that it was not verified. The products are already ranked: list every one
+of them, numbered, in the order given; do not skip, reorder or add any. For each give, in
+this order: name and brand, the numbers that answer the question (say per serving or per
+100 g, and the serving size), and the ingredient facts that matter. If an ingredient
+percentage is an estimate rather than declared on the label, say "estimated".
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
+
+# Same question -> same answer: the answer sees a fixed, ranked slice of the results,
+# and both calls run at temperature 0 with a fixed seed (OpenAI's best-effort determinism).
+ANSWER_TOP_N = 5
+SEED = 7
 
 
 def _client():
@@ -60,6 +66,7 @@ def parse_question(question, client=None, model=CHAT_MODEL):
     resp = client.chat.completions.create(
         model=model,
         temperature=0,
+        seed=SEED,
         messages=[
             {"role": "system", "content": PARSE_PROMPT.format(groups=", ".join(GROUPS))},
             {"role": "user", "content": question},
@@ -126,10 +133,11 @@ def applied_filters(spec):
 def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None):
     client = client or _client()
     payload = {"question": question, "filters": filters or {}, "notes": notes,
-               "products": [_facts(r) for r in results]}
+               "products": [_facts(r) for r in results[:ANSWER_TOP_N]]}
     resp = client.chat.completions.create(
         model=model,
-        temperature=0.2,
+        temperature=0,
+        seed=SEED,
         messages=[
             {"role": "system", "content": ANSWER_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},

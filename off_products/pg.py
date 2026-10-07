@@ -254,6 +254,7 @@ def search(conn, spec: QuerySpec, query_vector=None):
     else:
         params_order = []
     order.append("p.unique_scans_n DESC NULLS LAST")
+    order.append("p.code")  # final tie-break, so equal rows come back in a stable order
     sql = (
         f"SELECT p.code, p.record, {select_sim} FROM products p WHERE "
         + " AND ".join(where)
