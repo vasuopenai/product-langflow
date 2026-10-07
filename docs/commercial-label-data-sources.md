@@ -25,7 +25,8 @@ That gives two separate problems:
    actually sell, and where. This comes from the retailers (APIs, websites)
    or from scraped datasets.
 
-Join the two on UPC/GTIN.
+Join the two on UPC/GTIN. USDA FoodData Central (already in hand) covers
+most of (1); the open problem is (2).
 
 ## Per retailer
 
@@ -82,21 +83,36 @@ packaging.
 | **NIQ Label Insight / Brandbank** | Label transcriptions plus derived attributes (claims, diets, allergens) | Quote only |
 | **Kroger Partner API** | Deeper Kroger catalog and commerce access | Contract with Kroger |
 
-## Recommendation
+## Recommendation (USDA FoodData Central already in hand)
 
-1. **Now ($0):** add USDA FDC Branded Foods as a second label source next to
-   Open Food Facts. Prefer FDC's manufacturer-submitted nutrition when both
-   exist, and keep Open Food Facts' parsed ingredient tree and taxonomies.
-   Join on UPC. Add the Kroger public API for Kroger assortment.
-2. **Measure coverage:** for a sample of what Whole Foods, Kroger and Costco
-   sell in your target categories (bars, chips, chocolate…), check how many
-   UPCs have complete labels in FDC + OFF. That number shows whether paid data is
-   worth it.
-3. **Then decide:** if Whole Foods and Costco assortment is the gap, budget a
-   one-time scraped dataset (hundreds of dollars) *after* legal review, or
-   approach the retailers about a partnership. If label quality is the gap,
-   request quotes from Syndigo/Nutritionix and NIQ with your required storage
-   rights spelled out.
+USDA Branded Foods already covers the label data that brands push through
+the syndication networks. What it doesn't give you is **which products each
+retailer sells**, and fresher or more complete labels than its monthly
+updates and bulk dumps twice a year. Focus spending on those gaps:
+
+1. **Kroger ($0):** use the Kroger public API (10,000 product calls/day) to
+   build the Kroger assortment, keyed by UPC, and join it to your USDA data.
+   Where Kroger returns nutrition, use it to fill or refresh USDA records.
+   Confirm on developer.kroger.com that the terms allow storing results; if
+   not, ask Kroger about the Partner API.
+2. **Measure the gap:** for your target categories, count how many Kroger
+   UPCs have complete labels in USDA + Open Food Facts. Repeat for Whole
+   Foods and Costco once you have their UPC lists.
+3. **Whole Foods and Costco assortment:** there is no official API for
+   either. Options, cheapest first:
+   - a one-time scraped dataset (Apify Instacart about $5 per 1,000 products
+     covers both; Apify Costco about $1 per 1,000; Bright Data Whole Foods
+     quote), *after* legal review of the retailers' terms;
+   - a direct data partnership with the retailer, which takes longer but
+     carries no terms-of-service risk.
+4. **Only if label quality is still the gap:** request quotes from Syndigo
+   (Nutritionix / 1WorldSync) and NIQ Label Insight. Write bulk storage rights
+   into the quote request, and ask specifically for retailer-assortment data,
+   which these networks hold but USDA doesn't publish.
+
+The low-cost nutrition APIs (Edamam, Spoonacular, FatSecret) mostly overlap
+with USDA's branded data and add little for this project unless a
+specific product is missing.
 
 ## Sources
 
