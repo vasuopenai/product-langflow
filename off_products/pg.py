@@ -287,20 +287,36 @@ def search(conn, spec: QuerySpec, query_vector=None):
         # Fetch extra rows: the same product often has several barcodes (pack sizes).
         rows = conn.execute(sql, sim_params + params + params_order
                             + [spec.limit * DUPLICATE_HEADROOM]).fetchall()
-    out, seen = [], set()
+    unique, seen = [], set()
     for _, rec, sim in rows:
         rec = rec if isinstance(rec, dict) else json.loads(rec)
         keys = {_product_key(rec), _recipe_key(rec)} - {None}
         if keys & seen:
             continue
         seen |= keys
-        out.append({**rec, "similarity": sim})
-        if len(out) == spec.limit:
-            break
-    return out
+        unique.append({**rec, "similarity": sim})
+    return _spread_brands(unique, spec.limit)
 
 
 DUPLICATE_HEADROOM = 4
+MAX_PER_BRAND = 2
+
+
+def _spread_brands(ranked, limit):
+    """At most MAX_PER_BRAND per brand, in ranked order; if that leaves fewer than
+    ``limit`` products, fill with the held-back ones, still in ranked order."""
+    picked, held, per_brand = [], [], {}
+    for rec in ranked:
+        brand = (rec.get("brand") or "").strip().lower() or rec["code"]
+        if per_brand.get(brand, 0) < MAX_PER_BRAND:
+            per_brand[brand] = per_brand.get(brand, 0) + 1
+            picked.append(rec)
+        else:
+            held.append(rec)
+    if len(picked) < limit:
+        chosen = {id(r) for r in picked + held[:limit - len(picked)]}
+        picked = [r for r in ranked if id(r) in chosen]
+    return picked[:limit]
 
 
 def _recipe_key(rec):

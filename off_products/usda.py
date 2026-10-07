@@ -404,10 +404,23 @@ CATEGORY_RULES = [
 _CATEGORY_RULES = [(cid, re.compile(rx, re.I)) for cid, rx in CATEGORY_RULES]
 SNACK_CATEGORIES = {"cat:snack-bars", "cat:chips-pretzels", "cat:popcorn-nuts-seeds", "cat:crackers",
                     "cat:cookies", "cat:chocolate", "cat:candy", "cat:other-snacks"}
-CATEGORY_IDS = [cid for cid, _ in CATEGORY_RULES] + ["cat:snacks", "cat:other"]
+CATEGORY_IDS = [cid for cid, _ in CATEGORY_RULES] + ["cat:powders-mixes", "cat:snacks", "cat:other"]
+
+# The product itself is a powder or a drink mix ("Whey Protein Powder", "Protein & Greens
+# Drink Mix"), not a food that merely contains one ("Lollipop With Chili Pepper Powder").
+_POWDER_OR_MIX = re.compile(r"\b(?:drink|shake|smoothie|beverage)\s+mix\b|\bpowder$", re.I)
+_CONTAINS_POWDER = re.compile(r"\b(?:with|dusted|covered|filled|coated|dipped|in)\b", re.I)
 
 
-def categories(usda_category):
+def is_powder_or_mix(name):
+    head = (name or "").split(",")[0].strip()
+    return bool(_POWDER_OR_MIX.search(head)) and not (
+        head.lower().endswith("powder") and _CONTAINS_POWDER.search(head))
+
+
+def categories(usda_category, name=None):
+    if is_powder_or_mix(name):  # USDA files some of these under Chocolate, Candy, Snacks
+        return ["cat:powders-mixes"]
     text = (usda_category or "").replace("�", " ")
     cid = next((cid for cid, rx in _CATEGORY_RULES if rx.search(text)), "cat:other")
     return [cid, "cat:snacks"] if cid in SNACK_CATEGORIES else [cid]
@@ -574,7 +587,7 @@ def normalize(raw):
         "brand": _display(raw.get("brand_name") or raw.get("brand_owner")),
         "brand_owner": _display(raw.get("brand_owner")),
         "quantity": raw.get("package_weight") or None,
-        "categories": categories(raw.get("branded_food_category")),
+        "categories": categories(raw.get("branded_food_category"), raw.get("description")),
         "main_category": (raw.get("branded_food_category") or "").replace("�", "-").strip() or None,
         "labels": labels,
         "allergens": ing["allergens"] or off.get("allergens", []),

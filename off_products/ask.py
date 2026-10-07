@@ -61,8 +61,10 @@ this order: name and brand, the numbers that answer the question (say per servin
 100 g, and the serving size), and the ingredient facts that matter. If an ingredient
 percentage is an estimate rather than declared on the label, say "estimated".
 "ranking" says how the list was ordered: its "description" words (e.g. "breakfast",
-"crunchy") only ranked similar products higher and were not checked; if the question uses
-such words, say in one short line that they guided the ranking but were not verified.
+"crunchy") only ranked similar products higher and were not checked. If the question uses
+such words and no filter covers them, say in one short line that they guided the ranking
+but were not verified; name only those words (e.g. "high protein" is verified when there
+is a protein filter, "snacks" when there is a snack category, so don't mention them).
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
 

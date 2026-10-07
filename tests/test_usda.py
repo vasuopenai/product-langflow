@@ -97,6 +97,22 @@ def test_symbol_leftovers_are_removed_from_names():
     assert _display("HIGH PROTEIN BROWNIE[TILDE] BARS") == "High Protein Brownie Bars"
 
 
+def test_powders_and_drink_mixes_are_not_snacks():
+    assert categories("Chocolate", "OVERNIGHT RECOVERY PROTEIN POWDER, CHOCOLATE") == ["cat:powders-mixes"]
+    assert categories("Other Snacks", "PROTEIN & GREENS DRINK MIX") == ["cat:powders-mixes"]
+    assert categories("Candy", "LOLLIPOP WITH CHILI PEPPER POWDER, MANGO") == ["cat:candy", "cat:snacks"]
+    assert categories("Snacks", "POWDERED DONUTS") == ["cat:other-snacks", "cat:snacks"]
+
+
+def test_brand_spread_keeps_variety_but_never_loses_results():
+    from off_products.pg import _spread_brands
+    rec = lambda code, brand: {"code": code, "brand": brand}
+    ranked = [rec("1", "A"), rec("2", "A"), rec("3", "A"), rec("4", "B"), rec("5", "A"), rec("6", "C")]
+    assert [r["code"] for r in _spread_brands(ranked, 4)] == ["1", "2", "4", "6"]
+    assert [r["code"] for r in _spread_brands(ranked, 5)] == ["1", "2", "3", "4", "6"]  # filled in rank order
+    assert [r["code"] for r in _spread_brands(ranked[:3], 10)] == ["1", "2", "3"]
+
+
 def test_category_mapping():
     assert categories("Chips, Pretzels & Snacks") == ["cat:chips-pretzels", "cat:snacks"]
     assert categories("Snack, Energy & Granola Bars") == ["cat:snack-bars", "cat:snacks"]
