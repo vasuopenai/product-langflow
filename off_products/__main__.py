@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 
 from ._env import load_dotenv
 from .query import QuerySpec, to_sql
@@ -40,6 +41,11 @@ def _spec(arg):
 
 def main():
     load_dotenv()
+    # Product text has characters outside the Windows console code page (cp1252),
+    # which crashes print when output is redirected to a file.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(prog="off_products")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

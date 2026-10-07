@@ -16,7 +16,14 @@ Rules:
   goes into semantic_query (always fill it).
 - Use Open Food Facts taxonomy ids, English, lowercase, hyphenated, "en:" prefix:
   categories like en:protein-bars, en:potato-crisps, en:dark-chocolates, en:breakfast-cereals,
-  en:yogurts; ingredients like en:avocado-oil, en:olive-oil, en:cocoa-mass, en:almond, en:oat.
+  en:yogurts (granola and muesli -> en:breakfast-cereals; "snacks" -> en:snacks);
+  ingredients like en:avocado-oil,
+  en:olive-oil, en:cocoa, en:almond, en:oat.
+- Ids are singular and specific. "Nuts" as a first ingredient -> first_ingredient_any with
+  en:almond, en:roasted-almonds, en:peanut, en:roasted-peanuts, en:cashew-nuts, en:pecan-nut,
+  en:walnut, en:pistachio-nuts, en:macadamia-nut, en:hazelnut, en:brazil-nut, en:nut.
+- Label claims -> labels_all: gluten-free -> en:no-gluten, organic -> en:organic,
+  vegan -> en:vegan, non-GMO -> en:no-gmos, kosher -> en:kosher.
 - "per bar / per bag / per serving / in a bar" -> basis "serving". "per 100 g" or no unit
   context for densities -> basis "100g". If unclear for single-serve snacks use "serving".
 - "without X" for a whole family -> exclude_groups. Available groups: {groups}.
@@ -26,15 +33,18 @@ Rules:
 - "high protein" without a number -> protein_g serving >= 15 (bars, snacks) and
   sort_by "protein_g_serving".
 - Ingredient quantities ("70% cocoa", "at least 5 g almonds") -> ingredient_amounts.
+  Set declared_only only if the user says the amount must be stated on the label.
 - Do not invent constraints the user did not ask for.
 """
 
 ANSWER_PROMPT = """You recommend packaged food products using ONLY the products provided.
-Every product listed already satisfies the user's hard requirements (they were filtered
-in a database). Recommend the best 3-5, and for each give: name and brand, the numbers
-that answer the question (say per serving or per 100 g, and the serving size), and the
-ingredient facts that matter. If an ingredient percentage is an estimate rather than
-declared on the label, say "estimated". Mention any relaxed filters from the notes.
+Every product listed satisfies the database filters in "filters". Those filters are the
+only requirements that were checked. If the question asks for something that is not in
+"filters", or that "notes" says was ignored or relaxed, do not claim the products meet
+it: say plainly that it was not verified. Recommend the best 3-5, and for each give: name
+and brand, the numbers that answer the question (say per serving or per 100 g, and the
+serving size), and the ingredient facts that matter. If an ingredient percentage is an
+estimate rather than declared on the label, say "estimated".
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
 
@@ -70,7 +80,7 @@ def ground_spec(conn, spec):
         kept = known_tags(conn, kind, wanted)
         dropped = [t for t in wanted if t not in kept]
         if dropped:
-            notes.append(f"ignored unknown {kind} ids {dropped}")
+            notes.append(f"not enforced: unknown {kind} ids {dropped} in {field}")
             setattr(spec, field, kept)
     return notes
 
@@ -102,13 +112,21 @@ def _facts(r):
             for i in r["ingredients"]["items"] if i["depth"] == 0
         ],
         "groups": {g: v["status"] for g, v in r["derived"]["groups"].items() if v["status"] != "none"},
+        "free_of": [g for g, v in r["derived"]["groups"].items() if v["status"] == "none"],
         "labels": r["labels"][:10],
     }
 
 
-def answer(question, results, notes, client=None, model=CHAT_MODEL):
+def applied_filters(spec):
+    """The hard filters of a spec that actually ran, for the answer to cite."""
+    skip = {"semantic_query", "sort_by", "limit"}
+    return {k: v for k, v in spec.__dict__.items() if k not in skip and v not in ([], None)}
+
+
+def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None):
     client = client or _client()
-    payload = {"question": question, "notes": notes, "products": [_facts(r) for r in results]}
+    payload = {"question": question, "filters": filters or {}, "notes": notes,
+               "products": [_facts(r) for r in results]}
     resp = client.chat.completions.create(
         model=model,
         temperature=0.2,
@@ -131,5 +149,5 @@ def ask(conn, question, embedder, client=None):
         "spec": spec.__dict__,
         "notes": notes,
         "products": [_facts(r) for r in results],
-        "answer": answer(question, results, notes, client),
+        "answer": answer(question, results, notes, client, filters=applied_filters(spec)),
     }

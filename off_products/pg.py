@@ -70,6 +70,8 @@ class HashEmbedder:
     """Offline stand-in for smoke tests: hashed bag of words, no API key needed.
     Gives crude lexical similarity only; use OpenAIEmbedder for real search."""
 
+    model = "fake-hash"
+
     def __init__(self, dim=1536):
         self.dim = dim
 
@@ -102,6 +104,13 @@ def init_schema(conn, dim=1536):
         + ", ".join(f'"{c}" {_col_type(c)}' for c in cols)
         + f", search_text TEXT, record JSONB, embedding vector({dim}))"
     )
+    # Which model made each vector, so reloads can reuse unchanged embeddings.
+    # Checked first: ALTER takes an exclusive lock even when the column exists,
+    # which would wait on any open read (e.g. the API) during a reload.
+    if not conn.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'embed_model'"
+    ).fetchone():
+        conn.execute("ALTER TABLE products ADD COLUMN embed_model TEXT")
     conn.execute("CREATE TABLE IF NOT EXISTS product_tags (code TEXT, kind TEXT, tag TEXT)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_kind_tag ON product_tags(kind, tag, code)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_code ON product_tags(code)")
@@ -127,14 +136,28 @@ def create_vector_index(conn):
     conn.commit()
 
 
+def _embed_changed(conn, records, embedder):
+    """Embed only records whose search_text or embedding model changed since
+    the last load; reuse stored vectors for the rest. Returns (vectors, n_embedded)."""
+    rows = conn.execute(
+        "SELECT code, search_text, embedding::text FROM products "
+        "WHERE code = ANY(%s) AND embed_model = %s AND embedding IS NOT NULL",
+        ([r["code"] for r in records], embedder.model),
+    ).fetchall()
+    stored = {code: (text, vec) for code, text, vec in rows}
+    todo = [r for r in records if stored.get(r["code"], (None,))[0] != r["search_text"]]
+    fresh = dict(zip((r["code"] for r in todo), embedder.embed([r["search_text"] for r in todo]) if todo else []))
+    return [_vec(fresh[r["code"]]) if r["code"] in fresh else stored[r["code"]][1] for r in records], len(todo)
+
+
 def upsert_batch(conn, records, embedder):
     cols = _scalar_columns()
-    vectors = embedder.embed([r["search_text"] for r in records])
+    vectors, n_embedded = _embed_changed(conn, records, embedder)
     codes = [r["code"] for r in records]
     with conn.cursor() as cur:
         cur.execute("DELETE FROM product_tags WHERE code = ANY(%s)", (codes,))
         cur.execute("DELETE FROM product_ingredients WHERE code = ANY(%s)", (codes,))
-        all_cols = ["code", "obsolete", *cols, "search_text", "record", "embedding"]
+        all_cols = ["code", "obsolete", *cols, "search_text", "record", "embed_model", "embedding"]
         cur.executemany(
             "INSERT INTO products (" + ", ".join(f'"{c}"' for c in all_cols) + ") VALUES ("
             + ", ".join(["%s"] * (len(all_cols) - 1)) + ", %s::vector) ON CONFLICT (code) DO UPDATE SET "
@@ -142,7 +165,7 @@ def upsert_batch(conn, records, embedder):
             [
                 [r["code"], int(r["quality"]["obsolete"])]
                 + [_coerce(c, flat.get(c)) for c in cols]
-                + [r["search_text"], Jsonb(r), _vec(v)]
+                + [r["search_text"], Jsonb(r), embedder.model, v]
                 for r, v, flat in ((r, v, to_flat(r)) for r, v in zip(records, vectors))
             ],
         )
@@ -165,14 +188,35 @@ def upsert_batch(conn, records, embedder):
             ],
         )
     conn.commit()
+    return n_embedded
+
+
+def delete_products(conn, codes):
+    """Remove products loaded earlier that a reload now rejects."""
+    for table in ("product_tags", "product_ingredients", "products"):
+        conn.execute(f"DELETE FROM {table} WHERE code = ANY(%s)", (codes,))
+    conn.commit()
 
 
 def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=500,
          limit=None, require_ingredients=True, require_nutrition=True, progress=print):
-    """Stream an OFF export into Postgres. Returns (read, loaded)."""
+    """Stream an OFF export into Postgres. Returns (read, loaded).
+
+    Re-running is cheap: unchanged products reuse their stored embeddings."""
     with psycopg.connect(dsn) as conn:
         init_schema(conn, embedder.dim)
-        batch, seen, kept = [], 0, 0
+        batch, rejected, seen, kept, embedded = [], [], 0, 0, 0
+
+        def flush():
+            nonlocal kept, embedded
+            if batch:
+                embedded += upsert_batch(conn, batch, embedder)
+                kept += len(batch)
+                batch.clear()
+            if rejected:
+                delete_products(conn, rejected)
+                rejected.clear()
+
         for raw in iter_raw(src):
             seen += 1
             r = normalize(raw)
@@ -181,18 +225,16 @@ def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=50
             if require_ingredients and not r["ingredients"]["items"]:
                 continue
             if require_nutrition and r["nutrition"]["per_100g"]["energy_kcal"] is None:
+                if r["nutrition"]["implausible"]:
+                    rejected.append(r["code"])
                 continue
             batch.append(r)
             if len(batch) >= batch_size:
-                upsert_batch(conn, batch, embedder)
-                kept += len(batch)
-                batch = []
-                progress(f"read {seen}, loaded {kept}")
+                flush()
+                progress(f"read {seen}, loaded {kept}, newly embedded {embedded}")
             if limit and kept + len(batch) >= limit:
                 break
-        if batch:
-            upsert_batch(conn, batch, embedder)
-            kept += len(batch)
+        flush()
         return seen, kept
 
 
