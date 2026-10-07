@@ -174,3 +174,31 @@ def test_usda_load_and_search():
     assert codes(ingredient_amounts=[{"ingredient": "en:cocoa", "basis": "percent", "op": ">", "value": 70,
                                       "declared_only": True}]) == ["033333333333"]
     assert codes(categories_any=["cat:snacks"], first_ingredient_any=["en:cocoa"]) == ["033333333333"]
+
+
+@pytest.mark.skipif(not DSN, reason="set OFF_TEST_DATABASE_URL to run Postgres tests")
+def test_rederive_reapplies_rules_from_stored_rows_without_reembedding():
+    from off_products.pg import HashEmbedder, load
+
+    class Counting(HashEmbedder):
+        texts = 0
+
+        def embed(self, texts):
+            Counting.texts += len(texts)
+            return super().embed(texts)
+
+    with psycopg.connect(DSN, autocommit=True) as c:
+        for t in ("products", "product_tags", "product_ingredients"):
+            c.execute(f"DROP TABLE IF EXISTS {t}")
+    load(SAMPLE, DSN, HashEmbedder(), source="usda", progress=lambda *_: None)
+    with psycopg.connect(DSN, autocommit=True) as c:
+        # Simulate derived data made by an older rule.
+        c.execute("DELETE FROM product_tags WHERE code = '012345678905' AND kind = 'category'")
+        assert c.execute("SELECT count(*) FROM products WHERE record->'source' ? 'raw'").fetchone()[0] == 5
+
+    seen, kept = load(DSN, DSN, Counting(), source="stored", progress=lambda *_: None)
+    assert (seen, kept) == (5, 5) and Counting.texts == 0
+    with psycopg.connect(DSN) as c:
+        tags = {t for (t,) in c.execute(
+            "SELECT tag FROM product_tags WHERE code = '012345678905' AND kind = 'category'")}
+    assert tags == {"cat:chips-pretzels", "cat:snacks"}

@@ -566,6 +566,11 @@ def _display(text):
     return string.capwords(text.lower()) if text.isupper() else text or None
 
 
+RAW_KEYS = ["fdc_id", "gtin_upc", "brand_owner", "brand_name", "description", "ingredients",
+            "serving_size", "serving_size_unit", "household_serving_fulltext", "branded_food_category",
+            "package_weight", "market_country", "available_date", "modified_date", "nutrients", "off"]
+
+
 def normalize(raw):
     off = raw.get("off") or {}
     digits = re.sub(r"\D", "", raw["gtin_upc"])
@@ -614,7 +619,10 @@ def normalize(raw):
             "last_modified_t": raw.get("modified_date"),
             "obsolete": False,
         },
-        "source": {"usda_fdc_id": raw["fdc_id"], "off": bool(off)},
+        # The USDA row itself (plus the OFF extras), so `pg-rederive` can re-apply
+        # changed rules from the database without re-reading the source files.
+        "source": {"usda_fdc_id": raw["fdc_id"], "off": bool(off),
+                   "raw": {k: raw.get(k) for k in RAW_KEYS}},
         "image_url": off.get("image_url"),
         "url": f"https://fdc.nal.usda.gov/food-details/{raw['fdc_id']}/nutrients",
     }

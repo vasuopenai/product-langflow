@@ -7,6 +7,7 @@ Local SQLite (no services needed):
 Postgres + pgvector (DATABASE_URL, OPENAI_API_KEY):
   python -m off_products pg-load food.parquet --country en:united-states
   python -m off_products pg-load data/usda --source usda --off-enrich data/food.parquet
+  python -m off_products pg-rederive      # re-apply changed rules to the stored USDA rows
   python -m off_products pg-search '{"semantic_query": "protein bar", ...}'
   python -m off_products ask "protein bar with at least 20 g protein and no seed oils"
 """
@@ -82,6 +83,12 @@ def main():
     pl.add_argument("--hnsw", action="store_true",
                     help="build an HNSW index after loading (needs pgvector >= 0.8 for filtered search)")
 
+    pr = sub.add_parser("pg-rederive", help="re-apply the current parsing/category/label rules to the "
+                        "USDA rows stored in Postgres (no source files; embeds only changed text)")
+    pr.add_argument("--dsn", **dsn)
+    pr.add_argument("--embedder", **emb)
+    pr.add_argument("--batch-size", type=int, default=1000)
+
     ps = sub.add_parser("pg-search", help="run a QuerySpec (JSON) against Postgres")
     ps.add_argument("spec", help="QuerySpec JSON, or @file.json")
     ps.add_argument("--dsn", **dsn)
@@ -121,6 +128,9 @@ def main():
                 with psycopg.connect(args.dsn) as conn:
                     create_vector_index(conn)
                 print("HNSW index built")
+        elif args.cmd == "pg-rederive":
+            seen, kept = load(args.dsn, args.dsn, embedder, batch_size=args.batch_size, source="stored")
+            print(f"re-derived {seen} products, kept {kept}")
         elif args.cmd == "pg-search":
             spec = _spec(args.spec)
             vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None
