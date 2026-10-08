@@ -96,19 +96,28 @@ class KrogerClient:
             raise KrogerError(f"GET {path} failed ({status}): {body[:300]!r}")
         raise KrogerError(f"GET {path} failed after retries")
 
-    def locations(self, zip_code, limit=10):
-        data = self.get("/locations", {"filter.zipCode.near": zip_code, "filter.limit": limit})
-        return [
-            {
+    def locations(self, zip_code=None, limit=10, lat=None, lng=None, radius_miles=10):
+        """Stores near a ZIP code, or near a point (lat/lng), nearest first."""
+        params = {"filter.limit": limit, "filter.radiusInMiles": radius_miles}
+        if lat is not None and lng is not None:
+            params["filter.latLong.near"] = f"{lat},{lng}"
+        else:
+            params["filter.zipCode.near"] = zip_code
+        data = self.get("/locations", params)
+        out = []
+        for loc in data.get("data", []):
+            geo = loc.get("geolocation") or {}
+            out.append({
                 "location_id": loc.get("locationId"),
                 "name": loc.get("name"),
                 "chain": loc.get("chain"),
                 "address": ", ".join(
                     v for v in (loc.get("address", {}).get(k)
                                 for k in ("addressLine1", "city", "state", "zipCode")) if v),
-            }
-            for loc in data.get("data", [])
-        ]
+                "lat": geo.get("latitude"), "lng": geo.get("longitude"),
+                "phone": loc.get("phone"),
+            })
+        return out
 
     def products(self, product_ids, location_id=None):
         """Look up products by Kroger product id (the 13-digit UPC without check digit).
