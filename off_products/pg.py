@@ -198,11 +198,71 @@ def delete_products(conn, codes):
     conn.commit()
 
 
+def iter_stored(dsn, progress=print, batch_size=2000):
+    """(USDA row, stored record) for every product that kept its row in
+    ``record.source.raw``, read with a server-side cursor so the whole table never
+    sits in memory."""
+    with psycopg.connect(dsn) as conn:
+        missing = conn.execute(
+            "SELECT count(*) FROM products WHERE NOT (record->'source' ? 'raw')").fetchone()[0]
+        if missing:
+            progress(f"{missing} products have no stored source row (loaded before it was kept); "
+                     "they are left as they are - run a full pg-load once to include them")
+        with conn.cursor(name="rederive") as cur:
+            cur.itersize = batch_size
+            cur.execute("SELECT record FROM products WHERE record->'source' ? 'raw'")
+            for (rec,) in cur:
+                rec = rec if isinstance(rec, dict) else json.loads(rec)
+                yield rec["source"]["raw"], rec
+
+
+def _rederived(dsn, progress):
+    """Re-apply the current rules to the stored rows; yield only products whose result
+    differs from what is stored, so a rule that touches a few products writes a few."""
+    from . import usda
+
+    seen = changed = 0
+    for raw, stored in iter_stored(dsn, progress):
+        seen += 1
+        r = usda.normalize(raw)
+        if json.loads(json.dumps(r)) != stored:  # compare as stored (JSON types)
+            changed += 1
+            yield r
+        if seen % 50000 == 0:
+            progress(f"checked {seen}, changed {changed}")
+    progress(f"checked {seen} stored products, {changed} changed")
+
+
+def iter_records(src, source="off", countries=None, min_completeness=0.0, off_parquet=None,
+                 progress=print):
+    """Canonical records from either source. ``usda``: ``src`` is the unzipped
+    FoodData Central branded CSV directory; ``off_parquet`` optionally adds the
+    fields USDA lacks (labels, image, NOVA, popularity) by barcode. ``stored``:
+    ``src`` is the database itself (see ``pg-rederive``); only changed products."""
+    if source == "stored":
+        yield from _rederived(src, progress)
+        return
+    if source == "usda":
+        from . import usda
+
+        for raw in usda.iter_usda(src, off_parquet, progress):
+            r = usda.normalize(raw)
+            if r["name"] and (not countries or set(countries) & set(r["countries"])):
+                yield r
+        return
+    for raw in iter_raw(src):
+        r = normalize(raw)
+        if keep(r, countries, min_completeness):
+            yield r
+
+
 def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=500,
-         limit=None, require_ingredients=True, require_nutrition=True, progress=print):
-    """Stream an OFF export into Postgres. Returns (read, loaded).
+         limit=None, require_ingredients=True, require_nutrition=True, progress=print,
+         source="off", off_parquet=None):
+    """Stream products into Postgres. Returns (read, loaded).
 
     Re-running is cheap: unchanged products reuse their stored embeddings."""
+    records = iter_records(src, source, countries, min_completeness, off_parquet, progress)
     with psycopg.connect(dsn) as conn:
         init_schema(conn, embedder.dim)
         batch, rejected, seen, kept, embedded = [], [], 0, 0, 0
@@ -217,11 +277,8 @@ def load(src, dsn, embedder, countries=None, min_completeness=0.0, batch_size=50
                 delete_products(conn, rejected)
                 rejected.clear()
 
-        for raw in iter_raw(src):
+        for r in records:
             seen += 1
-            r = normalize(raw)
-            if not keep(r, countries, min_completeness):
-                continue
             if require_ingredients and not r["ingredients"]["items"]:
                 continue
             if require_nutrition and r["nutrition"]["per_100g"]["energy_kcal"] is None:
@@ -254,6 +311,7 @@ def search(conn, spec: QuerySpec, query_vector=None):
     else:
         params_order = []
     order.append("p.unique_scans_n DESC NULLS LAST")
+    order.append("p.code")  # final tie-break, so equal rows come back in a stable order
     sql = (
         f"SELECT p.code, p.record, {select_sim} FROM products p WHERE "
         + " AND ".join(where)
@@ -265,11 +323,71 @@ def search(conn, spec: QuerySpec, query_vector=None):
                 conn.execute("SET LOCAL hnsw.iterative_scan = 'relaxed_order'")
         except psycopg.Error:
             pass  # pgvector < 0.8: no iterative scan; exact scan still correct
-        rows = conn.execute(sql, sim_params + params + params_order + [spec.limit]).fetchall()
-    return [
-        {**(rec if isinstance(rec, dict) else json.loads(rec)), "similarity": sim}
-        for _, rec, sim in rows
-    ]
+        # Fetch extra rows: the same product often has several barcodes (pack sizes).
+        rows = conn.execute(sql, sim_params + params + params_order
+                            + [spec.limit * DUPLICATE_HEADROOM]).fetchall()
+    unique, seen = [], set()
+    for _, rec, sim in rows:
+        rec = rec if isinstance(rec, dict) else json.loads(rec)
+        keys = {_product_key(rec), _recipe_key(rec)} - {None}
+        if keys & seen:
+            continue
+        seen |= keys
+        unique.append({**rec, "similarity": sim})
+    return _spread_brands(unique, spec.limit)
+
+
+DUPLICATE_HEADROOM = 4
+MAX_PER_BRAND = 2
+
+
+def _spread_brands(ranked, limit):
+    """At most MAX_PER_BRAND per brand, in ranked order; if that leaves fewer than
+    ``limit`` products, fill with the held-back ones, still in ranked order."""
+    picked, held, per_brand = [], [], {}
+    for rec in ranked:
+        brand = (rec.get("brand") or "").strip().lower() or rec["code"]
+        if per_brand.get(brand, 0) < MAX_PER_BRAND:
+            per_brand[brand] = per_brand.get(brand, 0) + 1
+            picked.append(rec)
+        else:
+            held.append(rec)
+    if len(picked) < limit:
+        chosen = {id(r) for r in picked + held[:limit - len(picked)]}
+        picked = [r for r in ranked if id(r) in chosen]
+    return picked[:limit]
+
+
+def _recipe_key(rec):
+    """Same brand, ingredient list and nutrition = same product sold under two names
+    ("Brownie Bars, Chocolate Chip Blondie" / "High Protein Brownie Bars, ...")."""
+    text = " ".join(re.sub(r"[^a-z0-9]+", " ", ((rec.get("ingredients") or {}).get("text") or "").lower()).split())
+    if not text or not rec.get("brand"):
+        return None
+    per100 = (rec.get("nutrition") or {}).get("per_100g") or {}
+    numbers = tuple(round(per100.get(k) or 0) for k in ("energy_kcal", "protein_g", "fat_g", "carbs_g"))
+    return "recipe", rec["brand"].lower(), text, numbers
+
+
+def _product_key(rec):
+    """Same brand and name = same product for the shopper, whatever the pack size.
+
+    USDA names are "<product>, <variant>"; a variant that only repeats words of the
+    product ("Intense Dark 72% Cacao Dark Chocolate, Intense Dark 72% Cacao") is
+    dropped; word order and spacing are ignored ("Meal Replacement Bar, Super Cookie
+    Crunch" = "Super Cookie Crunch Meal Replacement Bar", "Big100" = "Big 100")."""
+    if not rec.get("name"):
+        return rec["code"]
+
+    def words(s):
+        s = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", (s or "").lower())
+        # "Protein Bars" = "Protein Bar"
+        return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+                for w in re.sub(r"[^a-z0-9]+", " ", s).split()]
+
+    head, _, variant = rec["name"].partition(",")
+    name = words(head) if set(words(variant)) <= set(words(head)) else words(rec["name"])
+    return " ".join(words(rec.get("brand"))), " ".join(sorted(set(name)))
 
 
 def known_tags(conn, kind, tags):

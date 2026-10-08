@@ -1,7 +1,11 @@
 {
   "semantic_query": "potato chips",
-  "categories_any": ["en:potato-crisps"],
-  "include_ingredients_all": ["en:avocado-oil"],
+  "categories_any": [
+    "cat:chips-pretzels"
+  ],
+  "include_ingredients_all": [
+    "en:avocado-oil"
+  ],
   "max_ingredients": 4,
   "sort_by": "ingredients_n"
 }

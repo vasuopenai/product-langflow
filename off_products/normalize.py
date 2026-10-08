@@ -162,9 +162,19 @@ def nutrition(raw):
             vserv = round(v100 * serving_g / 100, 2)
         per_100g[name] = v100
         per_serving[name] = vserv
+    return checked_nutrition(raw, per_100g, per_serving, serving_g,
+                             nutr.get("alcohol", {}).get("100g"),
+                             basis_on_label=raw.get("nutrition_data_per"),
+                             no_nutrition_data=raw.get("no_nutrition_data") in ("on", True))
+
+
+def checked_nutrition(raw, per_100g, per_serving, serving_g, alcohol_100g=None,
+                      basis_on_label=None, no_nutrition_data=False):
+    """Apply the plausibility checks and build the nutrition block. ``raw`` only
+    needs ``serving_size`` (label text) and optionally ``serving_quantity_unit``."""
     # Bad numbers become unknown, so numeric filters exclude the product instead
     # of ranking it first.
-    implausible = implausible_100g(raw, per_100g, nutr.get("alcohol", {}).get("100g"))
+    implausible = implausible_100g(raw, per_100g, alcohol_100g)
     if implausible:
         per_100g = dict.fromkeys(per_100g)
         per_serving = dict.fromkeys(per_serving)
@@ -177,12 +187,12 @@ def nutrition(raw):
     for d in (per_100g, per_serving):
         d["sodium_mg"] = round(d["sodium_g"] * 1000, 1) if d["sodium_g"] is not None else None
     return {
-        "basis_on_label": raw.get("nutrition_data_per"),
+        "basis_on_label": basis_on_label,
         "serving_size": raw.get("serving_size"),
         "serving_g": serving_g,
         "per_100g": per_100g,
         "per_serving": per_serving,
-        "no_nutrition_data": raw.get("no_nutrition_data") in ("on", True),
+        "no_nutrition_data": no_nutrition_data,
         "implausible": implausible,
     }
 

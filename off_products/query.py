@@ -38,8 +38,8 @@ QUERY_SPEC_SCHEMA = {
     "description": (
         "Search Open Food Facts products. Put every hard requirement in a filter "
         "field; put the remaining descriptive intent (flavour, style, product type) "
-        "in semantic_query. Category and ingredient values are Open Food Facts "
-        "taxonomy ids such as en:protein-bars, en:potato-crisps, en:avocado-oil, en:cocoa. "
+        "in semantic_query. Category and ingredient values are "
+        "ids such as cat:snack-bars, cat:chips-pretzels (categories) and en:avocado-oil, en:cocoa (ingredients). "
         "Nutrient amounts: use basis 'serving' when the user talks about a bar, bag, "
         "can or serving, and '100g' for densities or percentages."
     ),
@@ -94,6 +94,11 @@ QUERY_SPEC_SCHEMA = {
                 "type": "integer",
                 "description": "'minimal ingredients' ~ 5, 'very minimal' ~ 3-4.",
             },
+            "max_serving_g": {
+                "type": "number",
+                "description": "Largest serving in grams; keeps single-serve snacks apart from "
+                               "family packs and meals when ranking per serving.",
+            },
             "labels_all": {"type": "array", "items": {"type": "string"}},
             "exclude_allergens": {"type": "array", "items": {"type": "string"}},
             "countries_any": {"type": "array", "items": {"type": "string"}},
@@ -121,6 +126,7 @@ class QuerySpec:
     exclude_groups: list = field(default_factory=list)
     include_groups: list = field(default_factory=list)
     max_ingredients: int | None = None
+    max_serving_g: float | None = None
     labels_all: list = field(default_factory=list)
     exclude_allergens: list = field(default_factory=list)
     countries_any: list = field(default_factory=list)
@@ -212,6 +218,9 @@ def build_where(spec: QuerySpec, ph="?"):
     if spec.max_ingredients is not None:
         where.append(f"p.ingredients_n <= {ph}")
         params.append(spec.max_ingredients)
+    if spec.max_serving_g is not None:
+        where.append(f"p.serving_g <= {ph}")
+        params.append(spec.max_serving_g)
     if spec.max_nova_group is not None:
         where.append(f"p.nova_group <= {ph}")
         params.append(spec.max_nova_group)
@@ -266,6 +275,8 @@ def to_pinecone_filter(spec: QuerySpec):
         clauses.append({_nutrient_column(c): {_OPS[c["op"]]: c["value"]}})
     if spec.max_ingredients is not None:
         clauses.append({"ingredients_n": {"$lte": spec.max_ingredients}})
+    if spec.max_serving_g is not None:
+        clauses.append({"serving_g": {"$lte": spec.max_serving_g}})
     if spec.max_nova_group is not None:
         clauses.append({"nova_group": {"$lte": spec.max_nova_group}})
     return {"$and": clauses} if clauses else {}
