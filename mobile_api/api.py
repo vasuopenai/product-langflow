@@ -110,6 +110,27 @@ def with_kroger(conn, cards, location_id):
     return [{**c, "kroger": items.get(c["code"])} for c in cards]
 
 
+# Matches checked against the store per question (Kroger looks up 50 per call, cached).
+STORE_POOL = 150
+
+
+def store_first(conn, results, location_id):
+    """Put matches the store sells first, keeping search order within each group.
+
+    Most USDA barcodes (regional and small brands) have no Kroger listing at all, so
+    the closest matches alone often show nothing for the user's store."""
+    try:
+        items = kroger_items(conn, [r["code"] for r in results], location_id)
+    except Exception:
+        return results, None  # Kroger down: plain search order
+    sold = [r for r in results if (items.get(r["code"]) or {}).get("sold")]
+    if not sold:
+        return results, f"none of the {len(results)} closest matches are sold at the user's store"
+    rest = [r for r in results if r not in sold]
+    return sold + rest, (f"{len(sold)} of the {len(results)} closest matches are sold at the user's store; "
+                         "they are listed first")
+
+
 def staged_view(s):
     """What the app sees of a product under review (no raw source payloads)."""
     if not s:
@@ -160,7 +181,8 @@ def ask(body: Question, client_id: str = Depends(app_auth)):
         raise HTTPException(400, "question is empty")
     spend(client_id)
     with _conn() as conn:
-        result = run_ask(conn, body.question.strip(), embedder())
+        rerank = (lambda results: store_first(conn, results, body.location_id)) if body.location_id else None
+        result = run_ask(conn, body.question.strip(), embedder(), rerank=rerank, pool=STORE_POOL)
         recs = products.records(conn, [p["code"] for p in result["products"]])
         cards = [products.card(recs[p["code"]]) for p in result["products"] if p["code"] in recs]
         return {"question": result["question"], "answer": result["answer"], "notes": result["notes"],
