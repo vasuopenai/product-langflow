@@ -37,5 +37,14 @@ services:
     ports: ["127.0.0.1:8001:8001"]   # local machine only
     depends_on:
       db: {condition: service_healthy}
+  # Whole Foods brand products from the USDA data (read-only):
+  #   docker compose up -d --build wholefoods  # http://127.0.0.1:8002
+  wholefoods:
+    build: {context: ., dockerfile: wholefoods/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
+    ports: ["127.0.0.1:8002:8002"]   # local machine only
+    depends_on:
+      db: {condition: service_healthy}
 volumes:
   pgdata:
