@@ -155,7 +155,10 @@ def items_for(conn, codes, client=None):
         """SELECT code, found, description, size, price_regular, price_promo, aisle, image_url,
                   in_store, stock_level, fetched_at, location_id
            FROM kroger.items WHERE code = ANY(%s)""", (codes,)):
-        items[code] = {"sold": found, "description": desc, "size": size,
+        # Kroger answers with its catalog entry even when the store doesn't carry the
+        # item (inStore false, no price); only count it as sold there when it does.
+        sold = bool(found and (in_store or price is not None))
+        items[code] = {"sold": sold, "in_catalog": bool(found), "description": desc, "size": size,
                        "price": promo or price, "regular_price": price, "on_sale": bool(promo),
                        "aisle": aisle, "image_url": image, "in_store": in_store, "stock_level": stock,
                        "as_of": fetched.isoformat(), "location_id": loc}
@@ -175,10 +178,10 @@ def scope_codes(conn, categories=None):
 def coverage(conn):
     """Per product category: cached lookups and how many are sold at Kroger."""
     rows = conn.execute(
-        """SELECT t.tag, count(*), count(*) FILTER (WHERE i.found)
+        """SELECT t.tag, count(*), count(*) FILTER (WHERE (i.found AND (i.in_store OR i.price_regular IS NOT NULL)))
            FROM kroger.items i JOIN product_tags t ON t.code = i.code AND t.kind = 'category'
            GROUP BY 1 ORDER BY 2 DESC""").fetchall()
-    total, sold = conn.execute("SELECT count(*), count(*) FILTER (WHERE found) FROM kroger.items").fetchone()
+    total, sold = conn.execute("SELECT count(*), count(*) FILTER (WHERE (found AND (in_store OR price_regular IS NOT NULL))) FROM kroger.items").fetchone()
     return {"looked_up": total, "sold": sold,
             "by_category": [{"category": c, "looked_up": n, "sold": s} for c, n, s in rows]}
 
@@ -246,7 +249,7 @@ def latest_run(conn):
 
 
 def status(conn):
-    total, sold = conn.execute("SELECT count(*), count(*) FILTER (WHERE found) FROM kroger.items").fetchone()
+    total, sold = conn.execute("SELECT count(*), count(*) FILTER (WHERE (found AND (in_store OR price_regular IS NOT NULL))) FROM kroger.items").fetchone()
     return {
         "configured": configured(),
         "location_id": get_setting(conn, "location_id"),

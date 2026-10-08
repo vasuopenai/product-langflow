@@ -15,6 +15,7 @@ fixed in ``parse_product`` and re-parsed without calling the API again.
 """
 
 import base64
+import gzip
 import json
 import os
 import time
@@ -24,16 +25,24 @@ import urllib.request
 
 from .gtin import kroger_keys
 
-API = "https://api.kroger.com/v1"
+# Production. Apps registered in Kroger's Certification environment only work
+# against https://api-ce.kroger.com/v1 until they are promoted to production.
+API = os.getenv("KROGER_API_BASE", "https://api.kroger.com/v1").rstrip("/")
+
+
+def _body(raw):
+    """Kroger answers gzip-compressed even unasked; urllib doesn't decompress."""
+    return gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw
 
 
 def _urllib_fetch(method, url, headers, data=None, timeout=30):
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    req = urllib.request.Request(url, data=data, headers={"Accept-Encoding": "gzip", **headers},
+                                 method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read()
+            return resp.status, _body(resp.read())
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, _body(e.read())
 
 
 class KrogerError(RuntimeError):

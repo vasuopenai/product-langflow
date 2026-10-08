@@ -29,7 +29,11 @@ def kroger_product(kid, desc, price=3.99, promo=0):
             "aisleLocations": [{"description": "Aisle 12"}]}
 
 
-CATALOG = {to_kroger_id(CHIPS): kroger_product(to_kroger_id(CHIPS), "Avocado Oil Kettle Chips", 4.49, 3.99),
+NOT_CARRIED = kroger_product(to_kroger_id(BAR), "Protein Bar")
+NOT_CARRIED["items"] = [{"size": "2 oz", "fulfillment": {"inStore": False},
+                         "inventory": {"stockLevel": "TEMPORARILY_OUT_OF_STOCK"}}]  # no price
+CATALOG = {to_kroger_id(BAR): NOT_CARRIED,
+           to_kroger_id(CHIPS): kroger_product(to_kroger_id(CHIPS), "Avocado Oil Kettle Chips", 4.49, 3.99),
            to_kroger_id(CHOCOLATE): kroger_product(to_kroger_id(CHOCOLATE), "85% Dark Chocolate", 2.99)}
 
 
@@ -91,7 +95,8 @@ def test_lookup_caches_found_and_not_found(conn):
     out = sync.items_for(conn, [CHIPS, BAR], KrogerClient("id", "secret", fetch=fake))
     assert out["items"][CHIPS]["sold"] and out["items"][CHIPS]["price"] == 3.99
     assert out["items"][CHIPS]["on_sale"] and out["items"][CHIPS]["aisle"] == "Aisle 12"
-    assert out["items"][BAR]["sold"] is False
+    # Kroger knows the bar, but this store doesn't carry it (no price, not in store).
+    assert out["items"][BAR]["sold"] is False and out["items"][BAR]["in_catalog"] is True
     assert out["lookup"]["calls"] == 1  # both barcodes in one call
     # Cached: asking again makes no calls.
     again = sync.items_for(conn, [CHIPS, BAR], KrogerClient("id", "secret", fetch=fake))
@@ -126,7 +131,8 @@ def test_load_run_over_a_category_and_coverage(conn):
                   make_client=lambda: KrogerClient("id", "secret", fetch=FakeKroger()))
     run = sync.latest_run(conn)
     assert run["status"] == "done", run["message"]
-    assert run["stats"]["in_scope"] == 5 and run["stats"]["found"] == 2  # 3 chips, bar, chocolate
+    # 3 chips, bar, chocolate; Kroger knows 3 of them, the store carries 2 (not the bar)
+    assert run["stats"]["in_scope"] == 5 and run["stats"]["found"] == 3
     cov = sync.coverage(conn)
     assert cov["sold"] == 2 and any(r["category"] == "cat:snacks" and r["sold"] == 2 for r in cov["by_category"])
 
