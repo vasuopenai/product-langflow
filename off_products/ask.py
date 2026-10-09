@@ -176,12 +176,24 @@ def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None
     return resp.choices[0].message.content
 
 
-def ask(conn, question, embedder, client=None):
+def ask(conn, question, embedder, client=None, rerank=None, pool=50):
+    """Answer a question. `rerank`, if given, receives up to `pool` matches and returns
+    them reordered plus an optional note (e.g. products sold at the user's store first);
+    the usual number of results is kept from that order."""
     client = client or _client()
     spec = parse_question(question, client)
     notes = ground_spec(conn, spec)
+    limit = spec.limit
+    if rerank:
+        spec.limit = max(limit, pool)
     results, more = retrieve(conn, spec, embedder)
     notes += more
+    if rerank:
+        spec.limit = limit
+        results, note = rerank(results)
+        results = results[:limit]
+        if note:
+            notes.append(note)
     return {
         "question": question,
         "spec": spec.__dict__,

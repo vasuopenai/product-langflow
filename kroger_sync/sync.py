@@ -32,10 +32,11 @@ SCHEMA = [
     "CREATE SCHEMA IF NOT EXISTS kroger",
     "CREATE TABLE IF NOT EXISTS kroger.settings (key TEXT PRIMARY KEY, value TEXT)",
     """CREATE TABLE IF NOT EXISTS kroger.items (
-        code TEXT PRIMARY KEY, kroger_id TEXT, location_id TEXT, found BOOLEAN NOT NULL,
+        code TEXT NOT NULL, kroger_id TEXT, location_id TEXT NOT NULL, found BOOLEAN NOT NULL,
         brand TEXT, description TEXT, size TEXT,
         price_regular DOUBLE PRECISION, price_promo DOUBLE PRECISION, in_store BOOLEAN,
-        stock_level TEXT, aisle TEXT, image_url TEXT, raw JSONB, fetched_at TIMESTAMPTZ NOT NULL)""",
+        stock_level TEXT, aisle TEXT, image_url TEXT, raw JSONB, fetched_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (code, location_id))""",
     "CREATE INDEX IF NOT EXISTS kroger_items_found ON kroger.items (found)",
     "CREATE TABLE IF NOT EXISTS kroger.calls (day DATE PRIMARY KEY, n INTEGER NOT NULL)",
     """CREATE TABLE IF NOT EXISTS kroger.runs (
@@ -53,6 +54,17 @@ def budget():
 def init_schema(conn):
     for sql in SCHEMA:
         conn.execute(sql)
+    # Caches made when there was one store for everyone are keyed by barcode only;
+    # key them by barcode and store, so each app user gets their own store's prices.
+    pk = conn.execute(
+        """SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_index i
+           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+           WHERE i.indrelid = 'kroger.items'::regclass AND i.indisprimary""").fetchone()[0]
+    if pk == ["code"]:
+        conn.execute("DELETE FROM kroger.items WHERE location_id IS NULL")
+        conn.execute("ALTER TABLE kroger.items DROP CONSTRAINT items_pkey")
+        conn.execute("ALTER TABLE kroger.items ALTER COLUMN location_id SET NOT NULL")
+        conn.execute("ALTER TABLE kroger.items ADD PRIMARY KEY (code, location_id)")
     conn.commit()
 
 
@@ -78,11 +90,12 @@ def _add_calls(conn, n):
                      "ON CONFLICT (day) DO UPDATE SET n = kroger.calls.n + EXCLUDED.n", (n,))
 
 
-def _stale(conn, codes, max_age_days):
-    """The codes with no cached answer, or one older than max_age_days."""
+def _stale(conn, codes, location_id, max_age_days):
+    """The codes with no cached answer for this store, or one older than max_age_days."""
     fresh = {c for (c,) in conn.execute(
-        "SELECT code FROM kroger.items WHERE code = ANY(%s) AND fetched_at > now() - make_interval(days => %s)",
-        (list(codes), max_age_days))}
+        "SELECT code FROM kroger.items WHERE code = ANY(%s) AND location_id = %s "
+        "AND fetched_at > now() - make_interval(days => %s)",
+        (list(codes), location_id, max_age_days))}
     return [c for c in codes if c not in fresh]
 
 
@@ -93,7 +106,7 @@ def lookup(conn, client, codes, location_id, max_age_days=MAX_AGE_DAYS, call_bud
     call_budget = budget() if call_budget is None else call_budget
     stats = Counter()
     todo = {}
-    for code in _stale(conn, codes, max_age_days):
+    for code in _stale(conn, codes, location_id, max_age_days):
         kid = to_kroger_id(code)
         if kid:
             todo[kid] = code
@@ -124,8 +137,8 @@ def lookup(conn, client, codes, location_id, max_age_days=MAX_AGE_DAYS, call_bud
                          Jsonb(raw) if raw else None, now))
         conn.cursor().executemany(
             """INSERT INTO kroger.items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (code) DO UPDATE SET kroger_id = EXCLUDED.kroger_id,
-                 location_id = EXCLUDED.location_id, found = EXCLUDED.found, brand = EXCLUDED.brand,
+               ON CONFLICT (code, location_id) DO UPDATE SET kroger_id = EXCLUDED.kroger_id,
+                 found = EXCLUDED.found, brand = EXCLUDED.brand,
                  description = EXCLUDED.description, size = EXCLUDED.size,
                  price_regular = EXCLUDED.price_regular, price_promo = EXCLUDED.price_promo,
                  in_store = EXCLUDED.in_store, stock_level = EXCLUDED.stock_level,
@@ -139,12 +152,15 @@ def lookup(conn, client, codes, location_id, max_age_days=MAX_AGE_DAYS, call_bud
     return dict(stats)
 
 
-def items_for(conn, codes, client=None):
-    """Kroger info for the given store barcodes, for the UI's result list.
-    With a client and a chosen store, unknown or stale barcodes are looked up first."""
+def items_for(conn, codes, client=None, location_id=None):
+    """Kroger info for the given store barcodes at one store (``location_id``, default:
+    the store chosen in settings). With a client, unknown or stale barcodes are looked
+    up first."""
     codes = [c for c in dict.fromkeys(codes) if c]
     lookup_stats = {}
-    location = get_setting(conn, "location_id")
+    location = location_id or get_setting(conn, "location_id")
+    if not location:
+        return {"items": {}, "lookup": {}}
     if client is not None and location and codes:
         try:
             lookup_stats = lookup(conn, client, codes, location)
@@ -154,7 +170,7 @@ def items_for(conn, codes, client=None):
     for code, found, desc, size, price, promo, aisle, image, in_store, stock, fetched, loc in conn.execute(
         """SELECT code, found, description, size, price_regular, price_promo, aisle, image_url,
                   in_store, stock_level, fetched_at, location_id
-           FROM kroger.items WHERE code = ANY(%s)""", (codes,)):
+           FROM kroger.items WHERE code = ANY(%s) AND location_id = %s""", (codes, location)):
         # Kroger answers with its catalog entry even when the store doesn't carry the
         # item (inStore false, no price); only count it as sold there when it does.
         sold = bool(found and (in_store or price is not None))

@@ -46,5 +46,25 @@ services:
     ports: ["127.0.0.1:8002:8002"]   # local machine only
     depends_on:
       db: {condition: service_healthy}
+  # Mobile app gateway (scan, nearby store, ask, web results, review queue):
+  #   docker compose up -d --build mobile      # http://127.0.0.1:8003/docs
+  # MOBILE_BIND=0.0.0.0 lets a phone on the same Wi-Fi reach it (allow port 8003 in the firewall).
+  mobile:
+    build: {context: ., dockerfile: mobile_api/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OFF_CHAT_MODEL: ${OFF_CHAT_MODEL:-gpt-4o}
+      KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
+      KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}
+      KROGER_API_BASE: ${KROGER_API_BASE:-https://api.kroger.com/v1}
+      USDA_API_KEY: ${USDA_API_KEY:-DEMO_KEY}
+      WEB_SEARCH_MODEL: ${WEB_SEARCH_MODEL:-gpt-4o}
+      MOBILE_APP_KEY: ${MOBILE_APP_KEY:-}
+      MOBILE_ADMIN_KEY: ${MOBILE_ADMIN_KEY:-}
+      MOBILE_HOURLY_LIMIT: ${MOBILE_HOURLY_LIMIT:-60}
+    ports: ["${MOBILE_BIND:-127.0.0.1}:8003:8003"]
+    depends_on:
+      db: {condition: service_healthy}
 volumes:
   pgdata:

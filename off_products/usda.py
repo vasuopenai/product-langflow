@@ -569,6 +569,8 @@ def _display(text):
 RAW_KEYS = ["fdc_id", "gtin_upc", "brand_owner", "brand_name", "description", "ingredients",
             "serving_size", "serving_size_unit", "household_serving_fulltext", "branded_food_category",
             "package_weight", "market_country", "available_date", "modified_date", "nutrients", "off"]
+# Only on products added from the app's barcode scans (origin "scan").
+SCAN_KEYS = ["origin", "url", "sources"]
 
 
 def normalize(raw):
@@ -622,9 +624,11 @@ def normalize(raw):
         # The USDA row itself (plus the OFF extras), so `pg-rederive` can re-apply
         # changed rules from the database without re-reading the source files.
         "source": {"usda_fdc_id": raw["fdc_id"], "off": bool(off),
-                   "raw": {k: raw.get(k) for k in RAW_KEYS}},
+                   "raw": {k: raw.get(k) for k in RAW_KEYS + [k for k in SCAN_KEYS if k in raw]}},
         "image_url": off.get("image_url"),
-        "url": f"https://fdc.nal.usda.gov/food-details/{raw['fdc_id']}/nutrients",
+        "url": raw.get("url") or f"https://fdc.nal.usda.gov/food-details/{raw['fdc_id']}/nutrients",
     }
+    if raw.get("origin"):
+        record["source"]["origin"] = raw["origin"]
     record["search_text"] = search_text(record)
     return record

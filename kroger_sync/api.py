@@ -74,6 +74,7 @@ class Run(BaseModel):
 class Codes(BaseModel):
     codes: list[str]
     lookup: bool = True  # look up unknown/stale barcodes live; False = cache only
+    location_id: str | None = None  # a store; default: the store chosen in settings
 
 
 @app.get("/health")
@@ -104,7 +105,7 @@ def choose_store(store: Store):
 def items(body: Codes):
     """Kroger price, aisle, image and stock for the given product barcodes."""
     with _conn() as conn:
-        return sync.items_for(conn, body.codes, client() if body.lookup else None)
+        return sync.items_for(conn, body.codes, client() if body.lookup else None, body.location_id)
 
 
 @app.post("/runs", status_code=202)
