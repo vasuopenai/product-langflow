@@ -196,7 +196,13 @@ case "$cmd" in
   tunnel)
     echo "Review UI: leave this running, then start Streamlit with MOBILE_API_URL=http://127.0.0.1:9003"
     echo "and the admin key from 'lightsail.sh keys'. Ctrl+C closes the tunnel."
-    ssh "${SSH_OPTS[@]}" -N -L 9003:127.0.0.1:8003 "ubuntu@$LIGHTSAIL_HOST"
+    # Reconnect after network blips (Wi-Fi drops, sleep); ExitOnForwardFailure catches a busy port.
+    while true; do
+      ssh "${SSH_OPTS[@]}" -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N \
+        -L 9003:127.0.0.1:8003 "ubuntu@$LIGHTSAIL_HOST" || true
+      echo "$(date +%T) tunnel closed; reconnecting in 5 s (Ctrl+C to stop)"
+      sleep 5
+    done
     ;;
 
   ssh)
