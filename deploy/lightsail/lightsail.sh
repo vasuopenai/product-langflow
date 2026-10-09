@@ -56,9 +56,25 @@ case "$cmd" in
     [ -n "$pg" ] || pg=$(remote 'openssl rand -hex 24')
     [ -n "$app" ] || app=$(remote 'openssl rand -hex 16')
     [ -n "$admin" ] || admin=$(remote 'openssl rand -hex 24')
+    # A key missing from the local .env keeps the server's current value (never silently dropped);
+    # a required key in neither place stops here, before anything is written.
+    current=$(remote "cat $APP/.env 2>/dev/null" || true)
+    value() {
+      local v
+      v=$(local_value "$1")
+      if [ -z "$v" ]; then
+        v=$(printf '%s\n' "$current" | grep -E "^$1=" | tail -1 | cut -d= -f2-)
+        if [ -n "$v" ]; then echo "Note: $1 is not in your local .env; keeping the server's value." >&2; fi
+      fi
+      printf '%s' "$v"
+    }
     for k in OPENAI_API_KEY KROGER_CLIENT_ID KROGER_CLIENT_SECRET; do
-      if [ -z "$(local_value "$k")" ]; then echo "Warning: $k is not in your local .env." >&2; fi
+      if [ -z "$(value "$k" 2>/dev/null)" ]; then
+        echo "Error: $k is in neither your local .env nor the server's; add it to .env. Nothing written." >&2
+        exit 1
+      fi
     done
+    remote "cp -p $APP/.env $APP/.env.bak 2>/dev/null || true"  # the previous settings, just in case
     {
       echo "# Written by deploy/lightsail/lightsail.sh env on $(date -u +%F). Change keys in your local"
       echo "# .env and run it again; generated secrets below are kept."
@@ -72,11 +88,12 @@ case "$cmd" in
                KROGER_MAX_CALLS_PER_DAY USDA_API_KEY WEB_SEARCH_MODEL MOBILE_HOURLY_LIMIT SUPPORT_EMAIL \
                COMPOSE_PROFILES CATALOG_KROGER_CALLS_PER_DAY CATALOG_SECONDS_PER_CALL CATALOG_RESEARCH_PER_DAY \
                CATALOG_RECRAWL_DAYS; do
-        v=$(local_value "$k")
+        v=$(value "$k")
         if [ -n "$v" ]; then echo "$k=$v"; fi
       done
     } | remote "mkdir -p $APP && umask 077 && cat > $APP/.env"
-    echo "Wrote $APP/.env on the server (values not shown). The app and admin keys: lightsail.sh keys"
+    echo "Wrote $APP/.env on the server (values not shown; the previous one is .env.bak)."
+    echo "The app and admin keys: lightsail.sh keys"
     ;;
 
   deploy)
