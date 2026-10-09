@@ -5,6 +5,7 @@ Crawl (long-running, Kroger's official API):
   python -m catalog_gaps run --steps 5          # just a few Kroger pages (testing)
   python -m catalog_gaps status                 # crawl progress and today's usage
   python -m catalog_gaps add-terms FILE         # more search terms (one per line)
+  python -m catalog_gaps requeue term           # search the food terms again (brands, splits follow)
 
 Reference lists (once, and after new USDA / Open Food Facts downloads):
   python -m catalog_gaps build-refs --usda data/usda/branded_food.csv --off data/food.parquet
@@ -43,6 +44,8 @@ def main(argv=None):
     sub.add_parser("status")
     t = sub.add_parser("add-terms")
     t.add_argument("file")
+    rq = sub.add_parser("requeue", help="search a kind again (stored products are skipped)")
+    rq.add_argument("kind", choices=["term", "brand", "split"])
     b = sub.add_parser("build-refs")
     b.add_argument("--usda", help="USDA branded_food.csv")
     b.add_argument("--off", help="Open Food Facts food.parquet")
@@ -72,6 +75,8 @@ def main(argv=None):
             print(json.dumps(finder.status(conn), indent=2))
         elif args.cmd == "add-terms":
             print(f"added {finder.add_terms(conn, finder.read_terms(args.file))} new terms")
+        elif args.cmd == "requeue":
+            print(f"requeued {finder.requeue(conn, args.kind)} {args.kind} searches")
         elif args.cmd == "build-refs":
             from . import refs
             if not (args.usda or args.off):

@@ -54,9 +54,9 @@ class FakeKroger:
     def __init__(self, pages):
         self.pages, self.calls = pages, []
 
-    def search(self, term, start=1, limit=50, location_id=None):
-        self.calls.append((term, start))
-        return self.pages.get((term, start), [])
+    def search(self, term, start=1, limit=50, location_id=None, brand=None):
+        self.calls.append((term, start) if brand is None else (term, brand, start))
+        return self.pages.get((term, start) if brand is None else (term, brand, start), [])
 
 
 @pytest.fixture
@@ -89,10 +89,12 @@ def test_crawl_sorts_products_and_stages_only_real_gaps(conn):
                        ).fetchone()
     assert row == ("36000291452", "queued", "kroger_catalog", "Brand New Chips", 0)
 
-    assert finder.crawl_step(conn, client, off_check, settings) is None  # every term done
+    assert finder.next_term(conn, 30) == ("Brand", "", 1)  # the brand it found is searched next
+    assert finder.crawl_step(conn, client, off_check, settings)["term_done"]  # (nothing more for it)
+    assert finder.crawl_step(conn, client, off_check, settings) is None  # every search done
     s = finder.status(conn)
-    assert s["terms"] == {"total": 1, "done": 1} and s["staged_by_status"] == {"queued": 1}
-    assert s["today"]["kroger"] == 1
+    assert s["terms"] == {"total": 2, "done": 2} and s["staged_by_status"] == {"queued": 1}
+    assert s["today"]["kroger"] == 2
 
 
 @pg
@@ -104,7 +106,7 @@ def test_crawl_resumes_page_by_page_and_skips_products_already_seen(conn):
     settings = finder.Settings({})
 
     first = finder.crawl_step(conn, client, off_check, settings)
-    assert not first["term_done"] and finder.next_term(conn, 30) == ("bars", 51)
+    assert not first["term_done"] and finder.next_term(conn, 30) == ("bars", "", 51)
     second = finder.crawl_step(conn, client, off_check, settings)
     assert second["new"] == 1 and second["term_done"]  # the 3 repeats were skipped
     assert client.calls == [("bars", 1), ("bars", 51)]
@@ -161,3 +163,56 @@ def test_research_is_off_by_default_and_capped(conn):
     barcode = finder.research_step(conn, capped, research=lambda b: {"web": {}}, save=lambda c, b, f: saved.append(b))
     assert barcode == "36000291452" and saved == [barcode]
     assert finder.research_step(conn, capped) is None  # today's one is used
+
+
+def test_product_info_from_a_kroger_record():
+    from catalog_gaps import kroger_product as kp
+    record = {
+        "productId": "0001111012345", "upc": "0001111012345", "brand": "Simple Truth",
+        "description": "Simple Truth® Almond Butter", "categories": ["Natural & Organic"],
+        "items": [{"size": "16 oz"}], "images": [], "organicClaimName": "Organic", "allergensDescription": "Tree nuts",
+        "nutritionInformation": [{
+            "ingredientStatement": "Dry Roasted Almonds, Sea Salt.",
+            "servingSize": {"quantity": 2, "unitOfMeasure": {"code": "G24", "abbreviation": "tbsp"}},
+            "servingsPerPackage": {"value": 14},
+            "nutrients": [
+                {"code": "ENER-", "quantity": 190, "unitOfMeasure": {"code": "E14"}},
+                {"code": "PRO-", "quantity": 7, "unitOfMeasure": {"code": "GRM"}},
+                {"code": "NA", "quantity": 0.06, "unitOfMeasure": {"code": "GRM"}},
+                {"code": "K", "percentDailyIntake": 4},
+            ]}]}
+    draft = kp.product_info(record)
+    assert draft["ingredients"] == "Dry Roasted Almonds, Sea Salt." and draft["serving_text"] == "2 tbsp"
+    assert draft["serving_size_g"] == round(16 * 28.3495 / 14, 2)  # tablespoons: package weight / servings
+    assert draft["nutrients_serving"] == {"energy_kcal": 190, "protein_g": 7, "sodium_mg": 60}
+    assert draft["nutrients_100g"]["energy_kcal"] == round(190 * 100 / (16 * 28.3495 / 14), 3)
+    assert draft["labels"] == ["en:organic"] and draft["allergens"] == "Tree nuts"
+    assert kp.completeness(draft) == "full"
+    assert kp.package_grams("6 ct / 1.5 oz") == 1.5 * 28.3495 and kp.package_grams("12 fl oz") == 12 * 29.5735
+    assert kp.completeness(kp.product_info({"description": "Mystery", "nutritionInformation": ""})) == "basic"
+
+
+@pg
+def test_capped_searches_split_by_brand_and_new_brands_are_queued(conn):
+    finder.add_terms(conn, ["yogurt"])
+    full = [kroger_item(f"00022222{i:05d}", f"Yogurt {i}", brand="Chobani" if i % 2 else "Kroger")
+            for i in range(finder.PAGE)]
+    pages = {("yogurt", s): full for s in range(1, finder.MAX_START + 1, finder.PAGE)}
+    client = FakeKroger(pages)
+    settings = finder.Settings({})
+    while (step := finder.crawl_step(conn, client, lambda c, keys: True, settings)) and not step["term_done"]:
+        pass
+    queued = conn.execute("SELECT term, brand, kind FROM catalog.terms ORDER BY kind, term, brand").fetchall()
+    # the capped food term splits per brand seen; both brands are also queued as their own searches
+    assert queued == [("Chobani", "", "brand"), ("Kroger", "", "brand"),
+                      ("yogurt", "Chobani", "split"), ("yogurt", "Kroger", "split"), ("yogurt", "", "term")]
+    assert conn.execute("SELECT capped FROM catalog.terms WHERE term = 'yogurt' AND brand = ''").fetchone()[0]
+    # next come the brand searches, then the splits (with filter.brand)
+    assert finder.next_term(conn, 30) == ("Chobani", "", 1)
+    finder.crawl_step(conn, client, lambda c, keys: True, settings)
+    finder.crawl_step(conn, client, lambda c, keys: True, settings)
+    assert finder.next_term(conn, 30) == ("yogurt", "Chobani", 1)
+    finder.crawl_step(conn, client, lambda c, keys: True, settings)
+    assert client.calls[-1] == ("yogurt", "Chobani", 1)
+    s = finder.status(conn)
+    assert s["searches"]["term"]["capped"] == 1 and s["searches"]["brand"]["done"] == 2

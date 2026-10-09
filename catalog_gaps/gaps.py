@@ -11,7 +11,7 @@ A group (below) can be reported, exported to CSV, or staged for research and rev
 
 import csv
 
-from . import finder
+from . import finder, kroger_product
 
 GROUPS = {
     "not_in_usda": ("NOT in_usda", "Kroger products not in the USDA database"),
@@ -120,9 +120,12 @@ def products(conn, group=None, category=None, brand=None, q=None, limit=100, off
     items = []
     for code, brand_, name, category_, term, in_usda, in_off, in_off_us, in_app, raw, staged in rows:
         p = parse_product(raw) if raw else {}
+        info = kroger_product.product_info(raw) if raw else {}
         items.append({"barcode": code, "brand": brand_, "name": name, "category": category_, "term": term,
                       "size": p.get("size"), "image_url": p.get("image_url"), "in_usda": in_usda, "in_off": in_off,
-                      "in_off_us": in_off_us, "in_app": in_app, "review_status": staged})
+                      "in_off_us": in_off_us, "in_app": in_app, "review_status": staged,
+                      "kroger_info": kroger_product.completeness(info) if raw else None,
+                      "ingredients": info.get("ingredients")})
     return {"total": total, "items": items}
 
 
