@@ -1,0 +1,4 @@
+# Files that run on Linux keep LF line endings, also in Windows checkouts.
+*.sh text eol=lf
+deploy/lightsail/Caddyfile text eol=lf
+deploy/lightsail/*.yml text eol=lf
