@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 data/
 .claude/worktrees/
+
+# Lightsail target (server IP, key path)
+deploy/lightsail/target.env

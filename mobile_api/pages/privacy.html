@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Food Genie · Privacy Policy</title>
+<style>
+  :root { --bg: #F3F1FA; --card: #FFFFFF; --ink: #22224A; --muted: #4A4A78; --accent: #A8326A; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15142B; --card: #211F3F; --ink: #F1F0FF; --muted: #BDBBE6; --accent: #E58AB2; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 4px; color: var(--accent); }
+  h2 { font-size: 19px; margin: 32px 0 8px; }
+  p, li { color: var(--ink); }
+  .muted { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border-radius: 18px; padding: 4px 20px; margin-top: 12px; }
+  ul { padding-left: 20px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Privacy Policy</h1>
+  <p class="muted">Food Genie · Last updated {{UPDATED}}</p>
+
+  <p>Food Genie helps you find food products that match what you're looking for, check their ingredients and nutrition, and see prices and aisles at stores near you. This policy explains what the app sends to our server, why, and how long we keep it. In short: <b>no accounts, no ads, no tracking, and we never sell your data.</b></p>
+
+  <h2>What we collect and why</h2>
+  <div class="card">
+    <h3>Your location (only if you allow it)</h3>
+    <p>When you allow location access, the app sends your approximate position to our server to find nearby Kroger-family stores (such as Harris Teeter) and the store you're in, so it can show prices and aisles. For this lookup we keep the result in server memory for up to an hour, grouped by area (about 100 m), and do not save it in our database. You can use the app without location and pick a store yourself.</p>
+
+    <h3>Barcode scans</h3>
+    <p>When you scan a barcode, we store the barcode, the time, the selected store, your location at the time of the scan (if allowed) and the app's random ID (see below). We use this to add products that are missing from our database and to understand where products are found. If a product is unknown, we look it up in public product sources and review the result before adding it.</p>
+
+    <h3>Questions you type</h3>
+    <p>Your question is sent to OpenAI to understand it and write the answer, and to OpenAI's web search to find products sold online. Web results are saved together with the question text for 24 hours so repeated questions are fast; they are not linked to you or your device. Don't type personal information into questions.</p>
+
+    <h3>A random app ID</h3>
+    <p>On first launch the app creates a random ID and stores it on your phone. It is sent with requests so we can limit heavy use and group your scans. It is not linked to your name, email, phone number or advertising ID. Deleting the app deletes the ID.</p>
+
+    <h3>Camera</h3>
+    <p>The camera is used on your phone only, to read barcodes. No photos or video are stored or sent.</p>
+
+    <h3>Server logs</h3>
+    <p>Like most online services, our server records technical logs (IP address, time and the request made) for security and troubleshooting. They are rotated and kept for a short time only.</p>
+  </div>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>No accounts, sign-ups or passwords.</li>
+    <li>No advertising, no advertising IDs, no tracking across other apps or websites.</li>
+    <li>We never sell or rent your information.</li>
+  </ul>
+
+  <h2>Services we use</h2>
+  <ul>
+    <li><b>Amazon Web Services</b> (United States) hosts our server and database.</li>
+    <li><b>OpenAI</b> processes your questions and web searches. OpenAI does not use API data to train its models by default.</li>
+    <li><b>Kroger</b> receives store and product lookups (your approximate location for store search, and product barcodes) to return stores, prices and aisles.</li>
+    <li><b>USDA FoodData Central</b> and <b>Open Food Facts</b> receive barcodes of scanned products we don't know yet.</li>
+  </ul>
+
+  <h2>How long we keep data</h2>
+  <p>Scan records are kept to improve the product database. Web search results are kept 24 hours. Store lookups by location are kept in memory for up to an hour. You can ask us to delete scan records at any time using the contact below.</p>
+
+  <h2>Children</h2>
+  <p>Food Genie is not directed to children under 13, and we do not knowingly collect information from them.</p>
+
+  <h2>Changes</h2>
+  <p>If we change how the app uses data, we'll update this page and the date at the top.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or deletion requests: {{CONTACT}}</p>
+</main>
+</body>
+</html>

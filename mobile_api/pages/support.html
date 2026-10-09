@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Food Genie · Support</title>
+<style>
+  :root { --bg: #F3F1FA; --card: #FFFFFF; --ink: #22224A; --muted: #4A4A78; --accent: #A8326A; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15142B; --card: #211F3F; --ink: #F1F0FF; --muted: #BDBBE6; --accent: #E58AB2; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 4px; color: var(--accent); }
+  h2 { font-size: 19px; margin: 28px 0 8px; }
+  .card { background: var(--card); border-radius: 18px; padding: 4px 20px; margin-top: 12px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Food Genie Support</h1>
+  <p>Find food that fits what you're after, see what's inside, and check prices and aisles at your store.</p>
+
+  <h2>Contact</h2>
+  <p>Email {{CONTACT}}. Include your phone model and what you were doing when something went wrong.</p>
+
+  <h2>Questions</h2>
+  <div class="card">
+    <h3>Which stores show prices and aisles?</h3>
+    <p>Kroger-family stores in the United States, such as Kroger and Harris Teeter. Prices and aisles come from Kroger and can differ from the shelf.</p>
+    <h3>Why does a product say "No store listing"?</h3>
+    <p>The store's chain has no record of that barcode. "Not stocked here" means the chain lists it but your store doesn't carry it.</p>
+    <h3>I scanned a product and it wasn't found.</h3>
+    <p>Thanks! We look it up in public product sources and review it before adding it, so it may take a little while to appear.</p>
+    <h3>Do I need to share my location?</h3>
+    <p>No. Location only helps find the store you're in. You can choose a store yourself on the Store tab.</p>
+  </div>
+
+  <p><a href="/privacy">Privacy Policy</a></p>
+</main>
+</body>
+</html>

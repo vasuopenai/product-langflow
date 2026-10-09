@@ -33,3 +33,6 @@ APP_KEY = env("MOBILE_APP_KEY")      # if set, the app must send X-App-Key
 ADMIN_KEY = env("MOBILE_ADMIN_KEY")  # if set, review endpoints need X-Admin-Key
 # Paid calls per client per hour (questions, web searches, barcode research).
 HOURLY_LIMIT = int(env("MOBILE_HOURLY_LIMIT", "60"))
+# Shown on the /privacy and /support pages (App Store requires both).
+SUPPORT_EMAIL = env("SUPPORT_EMAIL")
+PRIVACY_UPDATED = env("PRIVACY_UPDATED", "October 9, 2026")

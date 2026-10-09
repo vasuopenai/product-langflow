@@ -1,0 +1,49 @@
+# Production overrides for one AWS Lightsail server. Used on top of the base file:
+#   docker compose -f docker-compose.yml -f deploy/lightsail/docker-compose.prod.yml up -d
+# Only Caddy is reachable from the internet (ports 80/443, automatic HTTPS for API_DOMAIN) and it
+# forwards to the mobile gateway. Postgres and the other services stay on the server
+# (127.0.0.1 or the Docker network); reach them over SSH (see README.md).
+services:
+  db:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Docker's default 64 MB /dev/shm is too small for parallel index builds (the HNSW vector
+    # index fails with "could not resize shared memory segment").
+    shm_size: 1gb
+    # Sized for an 8 GB server: keeps most of the vector index in memory.
+    command: ["postgres", "-c", "shared_buffers=2GB", "-c", "effective_cache_size=5GB",
+              "-c", "maintenance_work_mem=1GB", "-c", "work_mem=32MB"]
+  api:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${APP_DB:-food}
+  kroger:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${APP_DB:-food}
+  wholefoods:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${APP_DB:-food}
+  mobile:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${APP_DB:-food}
+      # Keys are required in production: the app sends X-App-Key, the review UI X-Admin-Key.
+      MOBILE_APP_KEY: ${MOBILE_APP_KEY:?set MOBILE_APP_KEY in .env}
+      MOBILE_ADMIN_KEY: ${MOBILE_ADMIN_KEY:?set MOBILE_ADMIN_KEY in .env}
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env}
+    volumes:
+      - ./deploy/lightsail/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates; keep, or Let's Encrypt rate limits can bite
+      - caddy_config:/config
+    depends_on: [mobile]
+volumes:
+  caddy_data:
+  caddy_config:

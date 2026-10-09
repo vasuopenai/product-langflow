@@ -63,6 +63,7 @@ services:
       MOBILE_APP_KEY: ${MOBILE_APP_KEY:-}
       MOBILE_ADMIN_KEY: ${MOBILE_ADMIN_KEY:-}
       MOBILE_HOURLY_LIMIT: ${MOBILE_HOURLY_LIMIT:-60}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}   # shown on /privacy and /support
     ports: ["${MOBILE_BIND:-127.0.0.1}:8003:8003"]
     depends_on:
       db: {condition: service_healthy}

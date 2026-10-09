@@ -1,0 +1,7 @@
+# HTTPS in front of the mobile gateway. Caddy gets and renews the Let's Encrypt certificate
+# by itself; API_DOMAIN's DNS A record must point at this server's static IP first.
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy mobile:8003
+	header -Server
+}
