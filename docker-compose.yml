@@ -23,5 +23,19 @@ services:
     ports: ["127.0.0.1:8000:8000"]   # local machine only
     depends_on:
       db: {condition: service_healthy}
+  # Kroger price/aisle lookups by barcode (separate service; own `kroger` schema):
+  #   docker compose up -d --build kroger      # http://127.0.0.1:8001
+  kroger:
+    build: {context: ., dockerfile: kroger_sync/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
+      KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
+      KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}
+      KROGER_MAX_CALLS_PER_DAY: ${KROGER_MAX_CALLS_PER_DAY:-9000}
+      # https://api-ce.kroger.com/v1 for apps still in Kroger's Certification environment
+      KROGER_API_BASE: ${KROGER_API_BASE:-https://api.kroger.com/v1}
+    ports: ["127.0.0.1:8001:8001"]   # local machine only
+    depends_on:
+      db: {condition: service_healthy}
 volumes:
   pgdata:
