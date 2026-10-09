@@ -8,6 +8,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Docker's default 64 MB /dev/shm is too small for parallel index builds (the HNSW vector
+    # index fails with "could not resize shared memory segment").
+    shm_size: 1gb
     # Sized for an 8 GB server: keeps most of the vector index in memory.
     command: ["postgres", "-c", "shared_buffers=2GB", "-c", "effective_cache_size=5GB",
               "-c", "maintenance_work_mem=1GB", "-c", "work_mem=32MB"]

@@ -104,15 +104,21 @@ case "$cmd" in
     echo "== uploading (the slow part: about 1 hour per 8 GB at 20 Mbit/s upload)"
     scp "${SSH_OPTS[@]}" "$tmp/food.dump" "ubuntu@$LIGHTSAIL_HOST:/opt/food-backups/upload-food.dump"
     echo "== restoring on the server (rebuilds the vector index; 10-30 minutes)"
+    # The app services create their own (empty) tables on startup; keep them stopped until the
+    # restore is done so it starts from an empty database.
+    in_app "$COMPOSE stop api kroger wholefoods mobile"
     if [ "$exists" = 1 ]; then
-      in_app "$COMPOSE stop api kroger wholefoods mobile && $COMPOSE exec -T db dropdb -U postgres food"
+      in_app "$COMPOSE exec -T db dropdb -U postgres food"
     fi
     in_app "$COMPOSE exec -T db createdb -U postgres food \
       && $COMPOSE cp /opt/food-backups/upload-food.dump db:/tmp/food.dump \
       && { $COMPOSE exec -T db pg_restore -U postgres -d food --no-owner -j 2 /tmp/food.dump \
            || echo 'pg_restore reported warnings; check the product count below'; } \
-      && $COMPOSE exec -T db rm -f /tmp/food.dump && rm -f /opt/food-backups/upload-food.dump"
-    echo "products on the server: $(in_app "$COMPOSE exec -T db psql -U postgres food -tAc 'select count(*) from products'")"
+      && $COMPOSE exec -T db rm -f /tmp/food.dump"
+    count=$(in_app "$COMPOSE exec -T db psql -U postgres food -tAc 'select count(*) from products'" | tr -d '[:space:]')
+    echo "products on the server: $count"
+    # Keep the upload until the restore is known good, so a retry needs no new upload.
+    if [ "${count:-0}" -gt 0 ]; then in_app "rm -f /opt/food-backups/upload-food.dump"; fi
     in_app "$COMPOSE up -d"
     health
     ;;
