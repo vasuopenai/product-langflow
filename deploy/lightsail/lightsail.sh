@@ -27,8 +27,22 @@ SSH_OPTS=(-i "$LIGHTSAIL_KEY" -o StrictHostKeyChecking=accept-new -o ServerAlive
 remote() { ssh "${SSH_OPTS[@]}" "ubuntu@$LIGHTSAIL_HOST" "$@"; }
 in_app() { remote "cd $APP && $*"; }
 
-# A key's value from your local .env, without printing it.
-local_value() { grep -E "^$1=" "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+# A key's value from your local .env, without printing it, read the way Docker Compose reads it:
+# optional "export", spaces around "=", single or double quotes, " # comments" after unquoted
+# values, Windows line endings.
+local_value() {
+  local line v
+  line=$(tr -d '\r' < "$ROOT/.env" 2>/dev/null | grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" | tail -1) || true
+  [ -n "$line" ] || return 0
+  v=${line#*=}
+  v="${v#"${v%%[![:space:]]*}"}"                                  # leading spaces
+  case "$v" in
+    \"*) v=${v#\"}; v=${v%%\"*} ;;                                # "quoted"
+    \'*) v=${v#\'}; v=${v%%\'*} ;;                                # 'quoted'
+    *) v=${v%%[[:space:]]#*}; v="${v%"${v##*[![:space:]]}"}" ;;   # unquoted: drop " # comment", trailing spaces
+  esac
+  printf '%s' "$v"
+}
 # A key's value from the server's .env (empty if none).
 server_value() { remote "grep -E '^$1=' $APP/.env 2>/dev/null | tail -1 | cut -d= -f2-" || true; }
 
