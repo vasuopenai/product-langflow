@@ -147,6 +147,36 @@ def export_csv(conn, path, group=None, category=None, brand=None):
     return len(rows)
 
 
+def refresh_drafts(conn):
+    """Rebuild the drafts of queued catalog products from the stored Kroger records (no Kroger calls),
+    e.g. after product_info() learned more fields. Returns how complete they are."""
+    from psycopg.types.json import Jsonb
+    rows = conn.execute(
+        """SELECT DISTINCT ON (sp.barcode) sp.barcode, s.raw FROM staging.scanned_products sp
+           JOIN catalog.seen s ON sp.barcode = ANY(s.keys)
+           WHERE sp.found_via = %s AND sp.status = 'queued' AND s.raw IS NOT NULL""", (finder.FOUND_VIA,)).fetchall()
+    tally = {}
+    for barcode, raw in rows:
+        draft = kroger_product.product_info(raw)
+        conn.execute("UPDATE staging.scanned_products SET draft = %s, field_sources = %s WHERE barcode = %s",
+                     (Jsonb(draft), Jsonb({f: "kroger" for f in draft}), barcode))
+        level = kroger_product.completeness(draft)
+        tally[level] = tally.get(level, 0) + 1
+    conn.commit()
+    return tally
+
+
+def info_coverage(conn, group="not_in_usda"):
+    """How complete Kroger's product information is for a group: {"full": n, "partial": n, "basic": n}."""
+    prepare(conn)
+    where, params = _where(group)
+    tally = {}
+    for (raw,) in conn.execute(f"SELECT raw FROM flags WHERE {where} AND raw IS NOT NULL", params):
+        level = kroger_product.completeness(kroger_product.product_info(raw))
+        tally[level] = tally.get(level, 0) + 1
+    return tally
+
+
 def stage_group(conn, group, category=None, brand=None, limit=None, dry_run=False):
     """Put a group into staging (status queued, found_via kroger_catalog) from the stored Kroger
     records. Products already staged (by a shopper's scan or earlier) are left alone."""

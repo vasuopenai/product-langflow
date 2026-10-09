@@ -15,6 +15,8 @@ Gaps (from what was crawled; no Kroger calls):
   python -m catalog_gaps export gaps.csv [--group not_in_usda] [--category snacks] [--brand kind]
   python -m catalog_gaps stage not_in_usda [--category snacks] [--brand kind] [--limit 100] [--dry-run]
   python -m catalog_gaps gaps [--limit 50]      # what's in staging from the catalog, newest first
+  python -m catalog_gaps info [not_in_usda]     # how complete Kroger's product information is for a group
+  python -m catalog_gaps refresh-drafts         # rebuild queued drafts from the stored Kroger records
 
 Groups: not_in_usda, not_in_off, not_in_off_us, neither, off_not_usda, not_in_app, usda_not_app
 
@@ -44,6 +46,9 @@ def main(argv=None):
     sub.add_parser("status")
     t = sub.add_parser("add-terms")
     t.add_argument("file")
+    sub.add_parser("refresh-drafts", help="rebuild queued drafts from the stored Kroger records")
+    ic = sub.add_parser("info", help="how complete Kroger's product information is for a group")
+    ic.add_argument("group", nargs="?", default="not_in_usda", choices=list(gaps.GROUPS))
     rq = sub.add_parser("requeue", help="search a kind again (stored products are skipped)")
     rq.add_argument("kind", choices=["term", "brand", "split"])
     b = sub.add_parser("build-refs")
@@ -75,6 +80,10 @@ def main(argv=None):
             print(json.dumps(finder.status(conn), indent=2))
         elif args.cmd == "add-terms":
             print(f"added {finder.add_terms(conn, finder.read_terms(args.file))} new terms")
+        elif args.cmd == "refresh-drafts":
+            print(json.dumps(gaps.refresh_drafts(conn)))
+        elif args.cmd == "info":
+            print(json.dumps(gaps.info_coverage(conn, args.group)))
         elif args.cmd == "requeue":
             print(f"requeued {finder.requeue(conn, args.kind)} {args.kind} searches")
         elif args.cmd == "build-refs":
