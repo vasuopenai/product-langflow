@@ -6,6 +6,8 @@ Local SQLite (no services needed):
 
 Postgres + pgvector (DATABASE_URL, OPENAI_API_KEY):
   python -m off_products pg-load food.parquet --country en:united-states
+  python -m off_products pg-load data/usda --source usda --off-enrich data/food.parquet
+  python -m off_products pg-rederive      # re-apply changed rules to the stored USDA rows
   python -m off_products pg-search '{"semantic_query": "protein bar", ...}'
   python -m off_products ask "protein bar with at least 20 g protein and no seed oils"
 
@@ -20,6 +22,7 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 
 from ._env import load_dotenv
 from .query import QuerySpec, to_sql
@@ -46,6 +49,11 @@ def _spec(arg):
 
 def main():
     load_dotenv()
+    # Product text has characters outside the Windows console code page (cp1252),
+    # which crashes print when output is redirected to a file.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(prog="off_products")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -65,7 +73,11 @@ def main():
                help="'fake' = offline hashed embeddings for smoke tests")
 
     pl = sub.add_parser("pg-load", help="normalize, embed and load into Postgres")
-    pl.add_argument("src")
+    pl.add_argument("src", help="OFF .jsonl/.parquet file, or the unzipped USDA branded CSV directory")
+    pl.add_argument("--source", choices=["off", "usda"], default="off",
+                    help="usda: FoodData Central Branded Foods (USDA is the source of truth)")
+    pl.add_argument("--off-enrich", metavar="FOOD_PARQUET",
+                    help="with --source usda: add labels, image, NOVA and popularity from OFF by barcode")
     pl.add_argument("--dsn", **dsn)
     pl.add_argument("--embedder", **emb)
     pl.add_argument("--country", action="append")
@@ -76,6 +88,12 @@ def main():
                     help="also load products without ingredients or nutrition")
     pl.add_argument("--hnsw", action="store_true",
                     help="build an HNSW index after loading (needs pgvector >= 0.8 for filtered search)")
+
+    pr = sub.add_parser("pg-rederive", help="re-apply the current parsing/category/label rules to the "
+                        "USDA rows stored in Postgres (no source files; embeds only changed text)")
+    pr.add_argument("--dsn", **dsn)
+    pr.add_argument("--embedder", **emb)
+    pr.add_argument("--batch-size", type=int, default=1000)
 
     ps = sub.add_parser("pg-search", help="run a QuerySpec (JSON) against Postgres")
     ps.add_argument("spec", help="QuerySpec JSON, or @file.json")
@@ -132,12 +150,16 @@ def main():
             seen, kept = load(
                 args.src, args.dsn, embedder, args.country, args.min_completeness,
                 args.batch_size, args.limit, not args.keep_incomplete, not args.keep_incomplete,
+                source=args.source, off_parquet=args.off_enrich,
             )
             print(f"read {seen} products, loaded {kept}")
             if args.hnsw:
                 with psycopg.connect(args.dsn) as conn:
                     create_vector_index(conn)
                 print("HNSW index built")
+        elif args.cmd == "pg-rederive":
+            seen, kept = load(args.dsn, args.dsn, embedder, batch_size=args.batch_size, source="stored")
+            print(f"re-derived {seen} products, kept {kept}")
         elif args.cmd == "pg-search":
             spec = _spec(args.spec)
             vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None

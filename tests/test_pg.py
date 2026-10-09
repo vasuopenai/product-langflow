@@ -88,6 +88,38 @@ def test_ask_end_to_end_with_relaxation(conn):
     assert any("made-up-category" in n for n in out["notes"])
 
 
+class CountingEmbedder(HashEmbedder):
+    def __init__(self):
+        super().__init__()
+        self.texts = 0
+
+    def embed(self, texts):
+        self.texts += len(texts)
+        return super().embed(texts)
+
+
+def test_reload_reuses_embeddings_and_drops_rejected(conn, tmp_path):
+    rows = [json.loads(line) for line in open(SAMPLE, encoding="utf-8")]
+    src = tmp_path / "reload.jsonl"
+    src.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    again = CountingEmbedder()
+    load(str(src), DSN, again, progress=lambda *_: None)
+    assert again.texts == 0  # nothing changed since the fixture load
+
+    # One product turns out to have impossible numbers; another gets a new name.
+    by_code = {r["code"]: r for r in rows}
+    bad, renamed = by_code["0000000000013"], by_code["0000000000024"]
+    bad["nutriments"] = {**bad["nutriments"], "proteins_100g": 150}
+    renamed["product_name"] += " v2"
+    src.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    changed = CountingEmbedder()
+    load(str(src), DSN, changed, progress=lambda *_: None)
+    assert changed.texts == 1
+    assert conn.execute("SELECT count(*) FROM products WHERE code = %s", (bad["code"],)).fetchone()[0] == 0
+
+    load(SAMPLE, DSN, HashEmbedder(), progress=lambda *_: None)  # restore for later tests
+
+
 def test_ask_relaxes_empty_category(conn):
     spec = {"semantic_query": "avocado oil chips", "categories_any": ["en:protein-bars"],
             "include_ingredients_all": ["en:avocado-oil"], "max_ingredients": 3}

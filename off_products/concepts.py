@@ -25,6 +25,8 @@ IDs were checked against taxonomies/food/ingredients.txt and
 taxonomies/additives.txt in openfoodfacts/openfoodfacts-server.
 """
 
+import re
+
 GENERIC_OILS = {
     "en:vegetable-oil", "en:vegetable-oil-and-fat", "en:vegetable-fat",
     "en:oil", "en:oil-and-fat", "en:fat",
@@ -137,3 +139,49 @@ def classify_all(ingredient_tags, additives_tags, leaves, has_ingredients, group
         name: classify_group(group, tags, leaves, has_ingredients)
         for name, group in groups.items()
     }
+
+
+# --- text rules, for ingredient statements without taxonomy ids (USDA) ----------
+#
+# Same groups and statuses as above, matched against each ingredient's name as
+# written on the label. "and/or" lists are split by the parser, so "canola and/or
+# palm oil" counts as containing both: "free of" claims stay strict.
+
+_SEED = r"canola|rapeseed|corn|cottonseed|soybean|soy|soya|sunflower|safflower|grape ?seed|rice bran"
+GENERIC_OIL_TEXT = {"vegetable oil", "oil", "vegetable shortening", "shortening", "vegetable fat",
+                    "vegetable oil blend", "cooking oil"}
+_GENERIC_OIL = r"^(?:vegetable|cooking)? ?(?:oil|oils|fat|shortening)(?: blend)?$|^vegetable (?:oil|fat|shortening)"
+TEXT_RULES = {
+    "seed_oils": (rf"\b(?:{_SEED})\b.*\boils?\b", rf"{_GENERIC_OIL}|mono-? ?(?:and|&) ?diglycerides"),
+    "palm_oil": (r"\bpalm\b", _GENERIC_OIL),
+    "hydrogenated_oils": (r"hydrogenated", None),
+    "added_sugars": (
+        r"(?<!no )\b(?:sugars?|sucrose|dextrose|fructose|glucose|maltose|honey|molasses|syrups?|agave|"
+        r"cane juice|invert|treacle|turbinado|demerara|muscovado|panela|jaggery)\b(?! alcohol)",
+        None),
+    "artificial_sweeteners": (r"sucralose|aspartame|acesulfame|saccharin|neotame|advantame|cyclamate", None),
+    "sugar_alcohols": (r"sorbitol|maltitol|xylitol|erythritol|lactitol|isomalt|mannitol", None),
+    "gums_thickeners": (
+        r"carrageenan|locust bean|carob bean gum|guar|gum arabic|acacia|xanthan|gellan|"
+        r"cellulose gum|carboxymethyl ?cellulose", None),
+    "artificial_colors": (
+        r"\b(?:red|yellow|blue|green|citrus red)\s*(?:no\.?\s*)?\d+\b|fd ?& ?c|artificial colou?r|\blake\b",
+        None),
+    "artificial_flavors": (r"artificial(?: \w+)? flavou?r", r"^(?:flavou?rs?|flavou?rings?|spices? and flavou?rs?)$"),
+    "natural_flavors": (r"natural(?: \w+)?(?: and \w+)? flavou?r", r"^(?:flavou?rs?|flavou?rings?|spices? and flavou?rs?)$"),
+    "synthetic_preservatives": (
+        r"sorbate|sorbic acid|benzoate|nitrite|nitrate|\bbha\b|\bbht\b|tbhq|propionate", None),
+}
+_TEXT_RULES = {g: (re.compile(c, re.I), re.compile(p, re.I) if p else None) for g, (c, p) in TEXT_RULES.items()}
+
+
+def classify_text(names, has_ingredients):
+    """Group statuses from ingredient names as written on the label."""
+    out = {}
+    for group, (contains_rx, possible_rx) in _TEXT_RULES.items():
+        contains = sorted({n for n in names if contains_rx.search(n)})
+        possible = sorted({n for n in names if possible_rx and possible_rx.search(n)} - set(contains))
+        status = ("contains" if contains else "possible" if possible
+                  else "none" if has_ingredients else "unknown")
+        out[group] = {"status": status, "matches": contains, "possible": possible}
+    return out

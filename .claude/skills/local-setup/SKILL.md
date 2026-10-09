@@ -61,11 +61,11 @@ container, wrong path), and ask the user about anything else.
    "already exists"), then run pytest with
    `OFF_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/off_test` → expect `16 passed`.
 7. Offline smoke test:
-   `PY -m off_products pg-load tests/fixtures/sample_products.jsonl --embedder fake`
-   (expect `loaded 10`), then for each `examples/*.json`:
+   `PY -m off_products pg-load tests/fixtures/usda --source usda --embedder fake`
+   (expect `loaded 4`), then for each `examples/*.json`:
    `PY -m off_products pg-search @examples/<file> --embedder fake`. Expected top hits:
    protein_bar → Chocolate Almond Protein Bar, avocado_oil_chips → Avocado Oil Sea Salt
-   Potato Chips, dark_chocolate → 85% Dark Chocolate.
+   Kettle Chips, dark_chocolate → 85% Dark Chocolate.
 8. Wipe the test rows:
    `docker compose exec -T db psql -U postgres off -c "DROP TABLE IF EXISTS products, product_tags, product_ingredients"`.
 

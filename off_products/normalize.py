@@ -10,6 +10,7 @@ Accepts both source shapes:
 """
 
 import json
+import re
 
 from .concepts import classify_all, GENERIC_OILS
 
@@ -92,6 +93,61 @@ def _serving_grams(raw):
     return grams
 
 
+_MASS_NUTRIENTS = ("protein_g", "fat_g", "carbs_g", "sugars_g", "fiber_g", "salt_g")
+_LABEL_AMOUNTS = re.compile(r"(\d+(?:\.\d+)?)\s*(?:g|ml)\b", re.I)
+# No \b before the unit: labels write "340ml" as often as "340 ml".
+_LIQUID = re.compile(r"(?<![a-z])(?:ml|cl|l|fl\.?\s*oz|oza)\b", re.I)
+MAX_SERVING_G = 1000
+MAX_LIQUID_PROTEIN_100G = 25  # milk ~3.4, liquid egg white ~11, protein shakes ~6-10
+
+
+def _is_liquid(raw):
+    unit = (raw.get("serving_quantity_unit") or "").lower()
+    return unit == "ml" or bool(_LIQUID.search(raw.get("serving_size") or ""))
+
+
+def implausible_100g(raw, per_100g, alcohol_100g=None):
+    """Reasons the per-100 g values can't be real. A common cause in Open Food
+    Facts is per-100 g numbers typed into the per-serving fields, which then
+    scale up to e.g. 150 g protein per 100 g."""
+    reasons = [f"{k} {per_100g[k]} > 100 g" for k in _MASS_NUTRIENTS
+               if per_100g.get(k) is not None and per_100g[k] > 100]
+    protein, fat, carbs = (per_100g.get(k) for k in ("protein_g", "fat_g", "carbs_g"))
+    if sum(m or 0 for m in (protein, fat, carbs)) > 105:
+        reasons.append("protein + fat + carbs > 105 g")
+    kcal = per_100g.get("energy_kcal")
+    if (kcal or 0) > 950:
+        reasons.append(f"energy {kcal} kcal > 950")
+    if kcal is not None and None not in (protein, fat, carbs):
+        # Atwater factors. Only protein and fat bound energy from below: sugar
+        # alcohols, allulose and fibre make low-calorie carbs legitimate.
+        # OFF records alcohol in % vol: 0.789 g/ml ethanol at 7 kcal/g.
+        expected = 4 * protein + 4 * carbs + 9 * fat + 5.5 * (alcohol_100g or 0)
+        if kcal > 1.5 * expected + 50:
+            reasons.append(f"energy {round(kcal)} kcal far above macros ({round(expected)} kcal)")
+        elif kcal < 0.7 * (4 * protein + 9 * fat) - 30:
+            reasons.append(f"energy {round(kcal)} kcal far below protein + fat")
+    if protein is not None and protein > MAX_LIQUID_PROTEIN_100G and _is_liquid(raw):
+        reasons.append(f"liquid with {protein} g protein per 100 ml")
+    return reasons
+
+
+def implausible_serving(raw, per_serving, serving_g):
+    """Reasons the per-serving values can't be trusted (the per-100 g ones may still be fine)."""
+    if not serving_g:
+        return []
+    reasons = []
+    if serving_g >= MAX_SERVING_G:
+        reasons.append(f"serving {serving_g} g is a package, not a serving")
+    on_label = [float(x) for x in _LABEL_AMOUNTS.findall(raw.get("serving_size") or "") if float(x) > 0]
+    if on_label and not any(0.5 <= serving_g / x <= 2 for x in on_label):
+        reasons.append(f"serving_quantity {serving_g} g disagrees with label {raw.get('serving_size')!r}")
+    mass = sum(per_serving.get(k) or 0 for k in ("protein_g", "fat_g", "carbs_g"))
+    if mass > serving_g * 1.05:
+        reasons.append(f"protein + fat + carbs {round(mass, 1)} g > serving {serving_g} g")
+    return reasons
+
+
 def nutrition(raw):
     nutr = _nutriments(raw)
     serving_g = _serving_grams(raw)
@@ -106,16 +162,38 @@ def nutrition(raw):
             vserv = round(v100 * serving_g / 100, 2)
         per_100g[name] = v100
         per_serving[name] = vserv
+    return checked_nutrition(raw, per_100g, per_serving, serving_g,
+                             nutr.get("alcohol", {}).get("100g"),
+                             basis_on_label=raw.get("nutrition_data_per"),
+                             no_nutrition_data=raw.get("no_nutrition_data") in ("on", True))
+
+
+def checked_nutrition(raw, per_100g, per_serving, serving_g, alcohol_100g=None,
+                      basis_on_label=None, no_nutrition_data=False):
+    """Apply the plausibility checks and build the nutrition block. ``raw`` only
+    needs ``serving_size`` (label text) and optionally ``serving_quantity_unit``."""
+    # Bad numbers become unknown, so numeric filters exclude the product instead
+    # of ranking it first.
+    implausible = implausible_100g(raw, per_100g, alcohol_100g)
+    if implausible:
+        per_100g = dict.fromkeys(per_100g)
+        per_serving = dict.fromkeys(per_serving)
+    else:
+        implausible = implausible_serving(raw, per_serving, serving_g)
+        if implausible:
+            per_serving = dict.fromkeys(per_serving)
+            serving_g = None
     # Sodium in mg reads more naturally in US-style questions.
     for d in (per_100g, per_serving):
         d["sodium_mg"] = round(d["sodium_g"] * 1000, 1) if d["sodium_g"] is not None else None
     return {
-        "basis_on_label": raw.get("nutrition_data_per"),
+        "basis_on_label": basis_on_label,
         "serving_size": raw.get("serving_size"),
         "serving_g": serving_g,
         "per_100g": per_100g,
         "per_serving": per_serving,
-        "no_nutrition_data": raw.get("no_nutrition_data") in ("on", True),
+        "no_nutrition_data": no_nutrition_data,
+        "implausible": implausible,
     }
 
 
@@ -292,13 +370,20 @@ def ingredient_amounts(p):
     """Per-ingredient amounts for "at least 30% almonds" style questions.
 
     One row per distinct ingredient id at any depth of the label. If an id
-    appears more than once (e.g. sugar in two sub-recipes) amounts are summed.
+    appears more than once (e.g. sugar in two sub-recipes) amounts are summed,
+    except when it is nested inside itself ("cocoa & cocoa butter (70% cocoa)"),
+    which restates the parent rather than adding to it. A total above 100%
+    is a parsing error and becomes unknown.
     grams are derived from percent and the serving / 100 g basis.
     """
     serving_g = p["nutrition"]["serving_g"]
     rows = {}
+    ancestors = []  # ids of the current item's parents, by depth
     for item in p["ingredients"]["items"]:
-        if not item["id"]:
+        del ancestors[item["depth"]:]
+        restated = item["id"] in ancestors
+        ancestors.append(item["id"])
+        if not item["id"] or restated:
             continue
         row = rows.setdefault(item["id"], {
             "ingredient": item["id"], "rank": item["rank"], "declared": False,
@@ -311,6 +396,8 @@ def ingredient_amounts(p):
             if value is not None:
                 row[key] = round((row[key] or 0) + value, 2)
     for row in rows.values():
+        if row["percent"] is not None and row["percent"] > 100:
+            row["percent"], row["declared"] = None, False
         pct = row["percent"]
         row["grams_per_100g"] = pct
         row["grams_per_serving"] = round(pct * serving_g / 100, 2) if pct is not None and serving_g else None

@@ -108,6 +108,138 @@ def test_per_serving_is_derived_from_100g_when_missing():
     assert normalize(raw)["derived"]["protein_kcal_pct"] == 30.0
 
 
+def test_impossible_per_100g_values_become_unknown():
+    # Real OFF pattern: per-100 g numbers typed into the per-serving fields of jerky.
+    raw = {
+        "code": "1", "product_name": "jerky", "serving_quantity": "28", "serving_size": "28g",
+        "nutriments": {"proteins_100g": 153, "proteins_serving": 42.86, "energy-kcal_100g": 982},
+    }
+    n = normalize(raw)["nutrition"]
+    assert n["per_100g"]["protein_g"] is None and n["per_serving"]["protein_g"] is None
+    assert any("protein_g" in reason for reason in n["implausible"])
+
+
+def test_serving_weight_that_disagrees_with_label_drops_per_serving_only():
+    # The serving quantity is the prepared drink, the label says a 5 g packet.
+    raw = {
+        "code": "1", "product_name": "drink mix", "serving_quantity": "507",
+        "serving_size": "1 PACKET MIX, MAKES 16.9 fl oz. (5 g)",
+        "nutriments": {"proteins_100g": 20, "energy-kcal_100g": 200},
+    }
+    n = normalize(raw)["nutrition"]
+    assert n["per_100g"]["protein_g"] == 20
+    assert n["per_serving"]["protein_g"] is None and n["serving_g"] is None
+    assert n["implausible"]
+
+
+def test_plausible_nutrition_is_kept():
+    raw = {
+        "code": "1", "product_name": "bar", "serving_quantity": "60", "serving_size": "1 bar (60 g)",
+        "nutriments": {"proteins_100g": 35, "fat_100g": 15, "carbohydrates_100g": 40,
+                       "energy-kcal_100g": 435},
+    }
+    n = normalize(raw)["nutrition"]
+    assert n["implausible"] == [] and n["per_serving"]["protein_g"] == 21
+
+
+def _nutrition(serving_size=None, serving_quantity=None, **per_100g):
+    raw = {"code": "1", "product_name": "x", "serving_size": serving_size,
+           "serving_quantity": serving_quantity, "nutriments": {f"{k}_100g": v for k, v in per_100g.items()}}
+    return normalize(raw)["nutrition"]
+
+
+def test_energy_inconsistent_with_macros_becomes_unknown():
+    # 519 kcal from 8 g protein, 10 g fat, 7 g carbs (about 150 kcal).
+    n = _nutrition(**{"energy-kcal": 519, "proteins": 8, "fat": 10, "carbohydrates": 7})
+    assert n["per_100g"]["energy_kcal"] is None
+    # Sugar alcohols make low energy from carbs legitimate.
+    n = _nutrition(**{"energy-kcal": 30, "proteins": 0, "fat": 0, "carbohydrates": 95})
+    assert n["implausible"] == []
+    # Spirits: energy comes from alcohol (% vol).
+    n = _nutrition(**{"energy-kcal": 231, "proteins": 0, "fat": 0, "carbohydrates": 0, "alcohol": 40})
+    assert n["implausible"] == []
+
+
+def test_liquid_with_protein_density_of_a_powder_becomes_unknown():
+    for size in ("16.9 OZA (507 ml)", "340ml"):
+        n = _nutrition(size, "507", **{"energy-kcal": 414, "proteins": 88.76, "fat": 0,
+                                       "carbohydrates": 5.92})
+        assert n["per_100g"]["protein_g"] is None, size
+    n = _nutrition("1 portion (443 ml)", "443", **{"energy-kcal": 41, "proteins": 9.5, "fat": 0,
+                                                   "carbohydrates": 0.5})
+    assert n["per_serving"]["protein_g"] == 42.09
+
+
+def test_package_sized_or_mislabelled_servings_drop_per_serving_only():
+    for size, qty in (("20 wings (1339 g)", "1339"), ("30 g (2 lbs)", "907.18")):
+        n = _nutrition(size, qty, **{"energy-kcal": 161, "proteins": 18.4, "fat": 9.56,
+                                     "carbohydrates": 0.67})
+        assert n["per_100g"]["protein_g"] == 18.4
+        assert n["per_serving"]["protein_g"] is None and n["serving_g"] is None
+
+
+def test_nested_restatement_of_an_ingredient_is_not_double_counted():
+    from off_products.normalize import ingredient_amounts
+    raw = {
+        "code": "1", "product_name": "dark chocolate",
+        "ingredients": [
+            {"id": "en:cocoa", "text": "Cocoa & cocoa butter", "percent_estimate": 68.39,
+             "ingredients": [{"id": "en:cocoa", "text": "cocoa", "percent": 70}]},
+            {"id": "en:cane-sugar", "text": "cane sugar", "percent": 30},
+            # Same id in two separate sub-recipes is still summed.
+            {"id": "en:filling", "text": "filling", "percent_estimate": 1,
+             "ingredients": [{"id": "en:cane-sugar", "text": "sugar", "percent_estimate": 0.5}]},
+        ],
+    }
+    rows = {r["ingredient"]: r for r in ingredient_amounts(normalize(raw))}
+    assert rows["en:cocoa"]["percent"] == 68.39 and not rows["en:cocoa"]["declared"]
+    assert rows["en:cane-sugar"]["percent"] == 30.5
+
+
+def test_answer_is_told_which_filters_ran():
+    from types import SimpleNamespace
+
+    from off_products.ask import answer, applied_filters
+    sent = {}
+
+    def create(**kw):
+        sent.update(json.loads(kw["messages"][-1]["content"]))
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    spec = QuerySpec(semantic_query="granola", first_ingredient_any=["en:almond"], limit=5)
+    answer("gluten-free granola, nuts first", [], [], client, filters=applied_filters(spec))
+    assert sent["filters"] == {"first_ingredient_any": ["en:almond"]}
+
+
+def test_answer_sees_a_fixed_ranked_slice_deterministically(records):
+    from types import SimpleNamespace
+
+    from off_products.ask import ANSWER_TOP_N, answer
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    ranked = sorted(records.values(), key=lambda r: r["code"])
+    answer("q", ranked, [], client)
+    sent = json.loads(calls[0]["messages"][-1]["content"])["products"]
+    assert [p["code"] for p in sent] == [r["code"] for r in ranked[:ANSWER_TOP_N]]
+    assert calls[0]["temperature"] == 0 and "seed" in calls[0]
+    assert [p["rank"] for p in sent] == list(range(1, len(sent) + 1))
+
+
+def test_answer_numbers_are_rounded_like_a_label():
+    from off_products.ask import _facts
+    r = {"name": "x", "brand": None, "code": "1", "url": None, "labels": [],
+         "nutrition": {"serving_size": "28 g", "per_100g": {},
+                       "per_serving": {"energy_kcal": 129.92, "protein_g": 2.0016, "sodium_mg": 120.4}},
+         "ingredients": {"text": "", "count_total": 0, "items": []}, "derived": {"groups": {}}}
+    assert _facts(r)["per_serving"] == {"energy_kcal": 130, "protein_g": 2.0, "sodium_mg": 120}
+
+
 def test_parquet_row_shape():
     row = {
         "code": "42",
