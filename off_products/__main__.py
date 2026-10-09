@@ -198,7 +198,7 @@ def _retail_commands(args):
         n = crawl(client, terms, args.out, args.location, args.max_calls)
         print(f"wrote {n} new products to {args.out}/products.jsonl ({client.calls} API calls this run)")
     elif args.cmd == "usda-index":
-        from .usda import build_index
+        from .usda_index import build_index
 
         Path(args.db).parent.mkdir(parents=True, exist_ok=True)
         read, unique = build_index(args.src, args.db)

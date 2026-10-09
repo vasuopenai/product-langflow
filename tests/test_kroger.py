@@ -10,7 +10,7 @@ from off_products.kroger import KrogerClient, crawl, iter_crawled, parse_product
 from off_products.query import QuerySpec, to_sql
 from off_products.retail import link_to_store, match, retailer_info, store_keys, summarize, write_report
 from off_products.store import build
-from off_products.usda import build_index
+from off_products.usda_index import build_index
 
 SAMPLE = Path(__file__).parent / "fixtures" / "sample_products.jsonl"
 
