@@ -119,6 +119,14 @@ class KrogerClient:
             })
         return out
 
+    def search(self, term, start=1, limit=50, location_id=None):
+        """One page of Kroger's product search (raw items). Kroger serves at most
+        filter.start 250 with filter.limit 50, so about 250 products per term."""
+        params = {"filter.term": term, "filter.limit": limit, "filter.start": start}
+        if location_id:
+            params["filter.locationId"] = location_id
+        return self.get("/products", params).get("data", [])
+
     def products(self, product_ids, location_id=None):
         """Look up products by Kroger product id (the 13-digit UPC without check digit).
 

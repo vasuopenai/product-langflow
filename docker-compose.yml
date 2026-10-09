@@ -67,5 +67,25 @@ services:
     ports: ["${MOBILE_BIND:-127.0.0.1}:8003:8003"]
     depends_on:
       db: {condition: service_healthy}
+  # Catalog gap finder: Kroger catalog products missing from our database, staged for review.
+  # Off by default; start with COMPOSE_PROFILES=catalog (or --profile catalog). docs/CATALOG_GAPS.md
+  catalog:
+    build: {context: ., dockerfile: catalog_gaps/Dockerfile}
+    profiles: ["catalog"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
+      # Local Open Food Facts copy; leave unset to use the Open Food Facts API instead.
+      OFF_DATABASE_URL: ${CATALOG_OFF_DATABASE_URL:-}
+      KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
+      KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}
+      KROGER_API_BASE: ${KROGER_API_BASE:-https://api.kroger.com/v1}
+      CATALOG_KROGER_CALLS_PER_DAY: ${CATALOG_KROGER_CALLS_PER_DAY:-2000}
+      CATALOG_SECONDS_PER_CALL: ${CATALOG_SECONDS_PER_CALL:-6}
+      CATALOG_RESEARCH_PER_DAY: ${CATALOG_RESEARCH_PER_DAY:-0}
+      CATALOG_RECRAWL_DAYS: ${CATALOG_RECRAWL_DAYS:-30}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}        # only used if research is turned on
+      USDA_API_KEY: ${USDA_API_KEY:-DEMO_KEY}
+    depends_on:
+      db: {condition: service_healthy}
 volumes:
   pgdata:

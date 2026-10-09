@@ -221,6 +221,16 @@ def test_web_source_urls_must_be_links_and_off_categories_english_only():
     assert "category" not in sources.open_food_facts(NEW, fake_fetch({"openfoodfacts": (200, off)}))["draft"]
 
 
+@pg
+def test_scan_of_a_catalog_queued_barcode_starts_research(api):
+    with psycopg.connect(DSN) as c:
+        c.execute("ALTER TABLE staging.scanned_products ADD COLUMN IF NOT EXISTS found_via TEXT")
+        c.execute("INSERT INTO staging.scanned_products (barcode, status, found_via) "
+                  "VALUES (%s, 'queued', 'kroger_catalog')", (key(NEW),))
+    assert api.post("/api/scan", json={"barcode": NEW}).json()["status"] == "researching"
+    wait_for(api, NEW, "pending")
+
+
 def test_privacy_and_support_pages_fill_in_the_contact(monkeypatch):
     from mobile_api import api, config
     monkeypatch.setattr(config, "SUPPORT_EMAIL", "help@example.com")

@@ -237,7 +237,8 @@ def scan(body: Scan, client_id: str = Depends(app_auth)):
             return {"status": "found", "product": with_kroger(conn, [products.card(rec)], body.location_id)[0]}
         is_new = staging.note_scan(conn, body.barcode)
         staged = staging.get(conn, body.barcode)
-        if is_new or staged["status"] == "error":
+        # "queued": staged by the catalog gap finder, not researched yet; a shopper is waiting now.
+        if is_new or staged["status"] in ("error", "queued"):
             spend(client_id)
             if not is_new:
                 conn.execute("UPDATE staging.scanned_products SET status = 'researching' WHERE barcode = %s",
