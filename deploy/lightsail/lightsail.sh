@@ -6,6 +6,7 @@
 #   lightsail.sh env           server .env: keys from your local .env plus generated secrets
 #   lightsail.sh deploy        ship the committed code, build, start, check https://API_DOMAIN
 #   lightsail.sh push-db       copy your local `food` database to the server (--replace to overwrite)
+#   lightsail.sh push-refs     copy the catalog gap finder's USDA/OFF barcode lists (docs/CATALOG_GAPS.md)
 # Day to day:
 #   lightsail.sh deploy | status | logs [service] | backup | keys | tunnel | ssh
 set -euo pipefail
@@ -26,8 +27,22 @@ SSH_OPTS=(-i "$LIGHTSAIL_KEY" -o StrictHostKeyChecking=accept-new -o ServerAlive
 remote() { ssh "${SSH_OPTS[@]}" "ubuntu@$LIGHTSAIL_HOST" "$@"; }
 in_app() { remote "cd $APP && $*"; }
 
-# A key's value from your local .env, without printing it.
-local_value() { grep -E "^$1=" "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+# A key's value from your local .env, without printing it, read the way Docker Compose reads it:
+# optional "export", spaces around "=", single or double quotes, " # comments" after unquoted
+# values, Windows line endings.
+local_value() {
+  local line v
+  line=$(tr -d '\r' < "$ROOT/.env" 2>/dev/null | grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" | tail -1) || true
+  [ -n "$line" ] || return 0
+  v=${line#*=}
+  v="${v#"${v%%[![:space:]]*}"}"                                  # leading spaces
+  case "$v" in
+    \"*) v=${v#\"}; v=${v%%\"*} ;;                                # "quoted"
+    \'*) v=${v#\'}; v=${v%%\'*} ;;                                # 'quoted'
+    *) v=${v%%[[:space:]]#*}; v="${v%"${v##*[![:space:]]}"}" ;;   # unquoted: drop " # comment", trailing spaces
+  esac
+  printf '%s' "$v"
+}
 # A key's value from the server's .env (empty if none).
 server_value() { remote "grep -E '^$1=' $APP/.env 2>/dev/null | tail -1 | cut -d= -f2-" || true; }
 
@@ -55,9 +70,25 @@ case "$cmd" in
     [ -n "$pg" ] || pg=$(remote 'openssl rand -hex 24')
     [ -n "$app" ] || app=$(remote 'openssl rand -hex 16')
     [ -n "$admin" ] || admin=$(remote 'openssl rand -hex 24')
+    # A key missing from the local .env keeps the server's current value (never silently dropped);
+    # a required key in neither place stops here, before anything is written.
+    current=$(remote "cat $APP/.env 2>/dev/null" || true)
+    value() {
+      local v
+      v=$(local_value "$1")
+      if [ -z "$v" ]; then
+        v=$(printf '%s\n' "$current" | grep -E "^$1=" | tail -1 | cut -d= -f2-)
+        if [ -n "$v" ]; then echo "Note: $1 is not in your local .env; keeping the server's value." >&2; fi
+      fi
+      printf '%s' "$v"
+    }
     for k in OPENAI_API_KEY KROGER_CLIENT_ID KROGER_CLIENT_SECRET; do
-      if [ -z "$(local_value "$k")" ]; then echo "Warning: $k is not in your local .env." >&2; fi
+      if [ -z "$(value "$k" 2>/dev/null)" ]; then
+        echo "Error: $k is in neither your local .env nor the server's; add it to .env. Nothing written." >&2
+        exit 1
+      fi
     done
+    remote "cp -p $APP/.env $APP/.env.bak 2>/dev/null || true"  # the previous settings, just in case
     {
       echo "# Written by deploy/lightsail/lightsail.sh env on $(date -u +%F). Change keys in your local"
       echo "# .env and run it again; generated secrets below are kept."
@@ -68,12 +99,15 @@ case "$cmd" in
       echo "MOBILE_APP_KEY=$app"
       echo "MOBILE_ADMIN_KEY=$admin"
       for k in OPENAI_API_KEY OFF_CHAT_MODEL KROGER_CLIENT_ID KROGER_CLIENT_SECRET KROGER_API_BASE \
-               KROGER_MAX_CALLS_PER_DAY USDA_API_KEY WEB_SEARCH_MODEL MOBILE_HOURLY_LIMIT SUPPORT_EMAIL; do
-        v=$(local_value "$k")
+               KROGER_MAX_CALLS_PER_DAY USDA_API_KEY WEB_SEARCH_MODEL MOBILE_HOURLY_LIMIT SUPPORT_EMAIL \
+               COMPOSE_PROFILES CATALOG_KROGER_CALLS_PER_DAY CATALOG_SECONDS_PER_CALL CATALOG_RESEARCH_PER_DAY \
+               CATALOG_RECRAWL_DAYS; do
+        v=$(value "$k")
         if [ -n "$v" ]; then echo "$k=$v"; fi
       done
     } | remote "mkdir -p $APP && umask 077 && cat > $APP/.env"
-    echo "Wrote $APP/.env on the server (values not shown). The app and admin keys: lightsail.sh keys"
+    echo "Wrote $APP/.env on the server (values not shown; the previous one is .env.bak)."
+    echo "The app and admin keys: lightsail.sh keys"
     ;;
 
   deploy)
@@ -121,6 +155,23 @@ case "$cmd" in
     if [ "${count:-0}" -gt 0 ]; then in_app "rm -f /opt/food-backups/upload-food.dump"; fi
     in_app "$COMPOSE up -d"
     health
+    ;;
+
+  push-refs)
+    # The catalog gap finder's barcode reference lists (full USDA and Open Food Facts), built
+    # locally with `python -m catalog_gaps build-refs`; a small upload instead of 9 GB of sources.
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    echo "== dumping catalog.usda_codes, catalog.off_codes, catalog.refs"
+    (cd "$ROOT" && docker compose exec -T db pg_dump -U postgres -Fc -Z 6 \
+       -t catalog.usda_codes -t catalog.off_codes -t catalog.refs food) > "$tmp/refs.dump"
+    echo "   dump is $(du -h "$tmp/refs.dump" | cut -f1)"
+    scp "${SSH_OPTS[@]}" "$tmp/refs.dump" "ubuntu@$LIGHTSAIL_HOST:/opt/food-backups/upload-refs.dump"
+    in_app "$COMPOSE exec -T db psql -U postgres food -qc 'CREATE SCHEMA IF NOT EXISTS catalog' \
+      && $COMPOSE cp /opt/food-backups/upload-refs.dump db:/tmp/refs.dump \
+      && $COMPOSE exec -T db pg_restore -U postgres -d food --clean --if-exists --no-owner /tmp/refs.dump \
+      && $COMPOSE exec -T db rm -f /tmp/refs.dump && rm -f /opt/food-backups/upload-refs.dump"
+    in_app "$COMPOSE exec -T db psql -U postgres food -c 'SELECT name, rows, built_at FROM catalog.refs'"
     ;;
 
   status)
