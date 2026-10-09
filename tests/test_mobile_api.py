@@ -222,6 +222,22 @@ def test_web_source_urls_must_be_links_and_off_categories_english_only():
 
 
 @pg
+def test_catalog_admin_endpoints(api):
+    with psycopg.connect(DSN) as c:
+        c.execute("TRUNCATE catalog.seen, catalog.usda_codes, catalog.off_codes")
+        c.execute("""INSERT INTO catalog.seen (product_id, code, keys, food, term, status, brand, name, category)
+                     VALUES ('1', '36000291452', ARRAY['36000291452'], true, 'chips', 'staged', 'B', 'New Chips', 'Snacks')""")
+    r = api.get("/admin/catalog/report").json()
+    assert r["kroger_food_products"] == 1 and r["groups"]["not_in_usda"] == 1
+    assert r["group_labels"]["not_in_usda"] == "Kroger products not in the USDA database"
+    page = api.get("/admin/catalog/products", params={"group": "neither", "category": "snack"}).json()
+    assert page["total"] == 1 and page["items"][0]["name"] == "New Chips"
+    assert r["categories"] == [{"category": "Snacks", "products": 1}]
+    assert api.post("/admin/catalog/stage", json={"group": "neither", "dry_run": True}).json() == {"would_stage": 1}
+    assert api.post("/admin/catalog/stage", json={"group": "nope"}).status_code == 400
+
+
+@pg
 def test_scan_of_a_catalog_queued_barcode_starts_research(api):
     with psycopg.connect(DSN) as c:
         c.execute("ALTER TABLE staging.scanned_products ADD COLUMN IF NOT EXISTS found_via TEXT")

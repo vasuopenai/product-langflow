@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY off_products ./off_products
 COPY kroger_sync ./kroger_sync
 COPY mobile_api ./mobile_api
+COPY catalog_gaps ./catalog_gaps
 ENV PORT=8003
 CMD ["sh", "-c", "uvicorn mobile_api.api:app --host 0.0.0.0 --port ${PORT}"]

@@ -24,28 +24,32 @@ GROUPS = {
 }
 
 
+# The spellings the app's products table may use for a key (USDA GTINs zero-padded to 12-14
+# digits, see mobile_api.barcodes.store_variants), so its primary-key index answers "in our app?".
+_APP_VARIANTS = """ARRAY[CASE WHEN length(k) <= 12 THEN lpad(k, 12, '0') END,
+                         CASE WHEN length(k) <= 13 THEN lpad(k, 13, '0') END,
+                         CASE WHEN length(k) <= 14 THEN lpad(k, 14, '0') END, k]"""
+
+
 def prepare(conn):
     """Temp table `flags`: one row per Kroger food product with its four memberships."""
-    conn.execute("DROP TABLE IF EXISTS pg_temp.app_codes")
-    conn.execute("CREATE TEMP TABLE app_codes (code TEXT PRIMARY KEY)")
-    conn.execute("INSERT INTO app_codes SELECT DISTINCT ltrim(code, '0') FROM products "
-                 "WHERE ltrim(code, '0') <> '' ON CONFLICT DO NOTHING")
     conn.execute("DROP TABLE IF EXISTS pg_temp.flags")
-    conn.execute("""
+    conn.execute(f"""
         CREATE TEMP TABLE flags AS
         SELECT s.product_id, s.keys, s.brand, s.name, s.category, s.term, s.raw,
                EXISTS (SELECT 1 FROM catalog.usda_codes u WHERE u.code = ANY(s.keys)) AS in_usda,
                EXISTS (SELECT 1 FROM catalog.off_codes o WHERE o.code = ANY(s.keys)) AS in_off,
                EXISTS (SELECT 1 FROM catalog.off_codes o WHERE o.code = ANY(s.keys) AND o.us) AS in_off_us,
-               EXISTS (SELECT 1 FROM app_codes a WHERE a.code = ANY(s.keys)) AS in_app
+               EXISTS (SELECT 1 FROM unnest(s.keys) k JOIN products p ON p.code = ANY({_APP_VARIANTS})) AS in_app
         FROM catalog.seen s
         WHERE s.food AND s.keys IS NOT NULL AND s.status NOT IN ('store_code', 'no_barcode')""")
 
 
-def _where(group, category=None, brand=None):
-    if group not in GROUPS:
+def _where(group=None, category=None, brand=None):
+    """SQL over `flags` for a group (None = all products), optionally narrowed by category and brand."""
+    if group is not None and group not in GROUPS:
         raise ValueError(f"unknown group {group!r}; one of: {', '.join(GROUPS)}")
-    sql, params = GROUPS[group][0], []
+    sql, params = (GROUPS[group][0] if group else "TRUE"), []
     if category:
         sql += " AND category ILIKE %s"
         params.append(f"%{category}%")
@@ -98,9 +102,38 @@ def format_report(r):
     return "\n".join(lines)
 
 
+def products(conn, group=None, category=None, brand=None, q=None, limit=100, offset=0):
+    """A page of Kroger food products with their memberships, for the UI. Returns {"total", "items"}."""
+    from kroger_sync.client import parse_product
+    prepare(conn)
+    where, params = _where(group, category, brand)
+    if q:
+        where += " AND (name ILIKE %s OR brand ILIKE %s OR %s = ANY(keys))"
+        params += [f"%{q}%", f"%{q}%", q.lstrip("0")]
+    total = conn.execute(f"SELECT count(*) FROM flags WHERE {where}", params).fetchone()[0]
+    rows = conn.execute(
+        f"""SELECT f.keys[1], f.brand, f.name, f.category, f.term, f.in_usda, f.in_off, f.in_off_us, f.in_app,
+                   f.raw, sp.status
+            FROM flags f LEFT JOIN staging.scanned_products sp ON sp.barcode = ANY(f.keys)
+            WHERE {where} ORDER BY f.category, f.brand, f.name LIMIT %s OFFSET %s""",
+        params + [limit, offset]).fetchall()
+    items = []
+    for code, brand_, name, category_, term, in_usda, in_off, in_off_us, in_app, raw, staged in rows:
+        p = parse_product(raw) if raw else {}
+        items.append({"barcode": code, "brand": brand_, "name": name, "category": category_, "term": term,
+                      "size": p.get("size"), "image_url": p.get("image_url"), "in_usda": in_usda, "in_off": in_off,
+                      "in_off_us": in_off_us, "in_app": in_app, "review_status": staged})
+    return {"total": total, "items": items}
+
+
+def categories(conn):
+    return [{"category": c, "products": n} for c, n in conn.execute(
+        "SELECT coalesce(category, '(none)'), count(*) FROM catalog.seen WHERE food GROUP BY 1 ORDER BY 2 DESC")]
+
+
 def export_csv(conn, path, group=None, category=None, brand=None):
     prepare(conn)
-    where, params = _where(group, category, brand) if group else ("TRUE", [])
+    where, params = _where(group, category, brand)
     rows = conn.execute(f"""SELECT keys[1], brand, name, category, term, in_usda, in_off, in_off_us, in_app
                             FROM flags WHERE {where} ORDER BY category, brand, name""", params).fetchall()
     with open(path, "w", newline="", encoding="utf-8") as f:
