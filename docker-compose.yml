@@ -74,8 +74,6 @@ services:
     profiles: ["catalog"]
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/${APP_DB:-food}
-      # Local Open Food Facts copy; leave unset to use the Open Food Facts API instead.
-      OFF_DATABASE_URL: ${CATALOG_OFF_DATABASE_URL:-}
       KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
       KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}
       KROGER_API_BASE: ${KROGER_API_BASE:-https://api.kroger.com/v1}

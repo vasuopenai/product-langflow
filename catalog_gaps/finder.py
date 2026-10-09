@@ -46,6 +46,19 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS catalog_seen_status ON catalog.seen (status)",
     """CREATE TABLE IF NOT EXISTS catalog.usage (
         day DATE NOT NULL, what TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, what))""",
+    # Facts kept per Kroger product so the gap report can be recomputed against any reference:
+    # every barcode reading (Kroger drops the check digit) and whether it's food.
+    "ALTER TABLE catalog.seen ADD COLUMN IF NOT EXISTS keys TEXT[]",
+    "ALTER TABLE catalog.seen ADD COLUMN IF NOT EXISTS food BOOLEAN",
+    # Kroger's full product record, so any group can be staged later without crawling again.
+    "ALTER TABLE catalog.seen ADD COLUMN IF NOT EXISTS raw JSONB",
+    "UPDATE catalog.seen SET keys = ARRAY[code], food = status <> 'non_food' WHERE keys IS NULL AND code IS NOT NULL",
+    # Every barcode in the full USDA Branded Foods file and the full Open Food Facts export
+    # (canonical keys: digits, leading zeros stripped), built by `python -m catalog_gaps build-refs`.
+    "CREATE TABLE IF NOT EXISTS catalog.usda_codes (code TEXT PRIMARY KEY)",
+    "CREATE TABLE IF NOT EXISTS catalog.off_codes (code TEXT PRIMARY KEY, us BOOLEAN NOT NULL)",
+    """CREATE TABLE IF NOT EXISTS catalog.refs (
+        name TEXT PRIMARY KEY, source TEXT, rows BIGINT, built_at TIMESTAMPTZ DEFAULT now())""",
     # Where a staged product came from: a shopper's scan (NULL) or this catalog crawl.
     "ALTER TABLE staging.scanned_products ADD COLUMN IF NOT EXISTS found_via TEXT",
 ]
@@ -61,7 +74,6 @@ class Settings:
         # 0 = store gaps only (analysis); research them from the Review tab or raise this later.
         self.research_per_day = int(env.get("CATALOG_RESEARCH_PER_DAY", "0"))
         self.recrawl_days = int(env.get("CATALOG_RECRAWL_DAYS", "30"))
-        self.off_dsn = env.get("OFF_DATABASE_URL") or None  # local Open Food Facts copy, else its API
 
 
 def init_schema(conn):
@@ -106,52 +118,58 @@ def in_products(conn, code):
                         (store_variants(code),)).fetchone() is not None
 
 
+def is_store_code(k):
+    """Codes no outside database can know: PLU produce numbers and in-store random-weight
+    labels (UPC number system 2, e.g. deli and meat counter items)."""
+    return len(k) < 8 or (len(k) == 11 and k.startswith("2"))
+
+
 class OffCheck:
-    """Is a barcode in Open Food Facts? Uses the local copy when OFF_DATABASE_URL is set,
-    otherwise Open Food Facts' public API (counted, and paced by the caller)."""
+    """Is a barcode in Open Food Facts? Uses catalog.off_codes (the full export, see
+    `build-refs`) when it's loaded, otherwise Open Food Facts' public API, at most one read a second."""
 
     API_INTERVAL = 1.0  # seconds between API reads; Open Food Facts asks for at most 100 a minute
 
-    def __init__(self, off_dsn=None, fetch=sources.http_json, sleep=time.sleep, clock=time.monotonic):
-        import psycopg
-        self.conn = psycopg.connect(off_dsn) if off_dsn else None
+    def __init__(self, fetch=sources.http_json, sleep=time.sleep, clock=time.monotonic):
         self.fetch, self.sleep, self.clock = fetch, sleep, clock
         self._last = None
+        self._refs = None
 
-    def __call__(self, conn, code):
-        if self.conn is not None:
-            return self.conn.execute("SELECT 1 FROM products WHERE code = ANY(%s) LIMIT 1",
-                                     (store_variants(code),)).fetchone() is not None
+    def __call__(self, conn, keys):
+        if self._refs is None:
+            self._refs = conn.execute("SELECT EXISTS (SELECT 1 FROM catalog.off_codes)").fetchone()[0]
+        if self._refs:
+            return conn.execute("SELECT 1 FROM catalog.off_codes WHERE code = ANY(%s) LIMIT 1",
+                                (list(keys),)).fetchone() is not None
         if self._last is not None:
             wait = self.API_INTERVAL - (self.clock() - self._last)
             if wait > 0:
                 self.sleep(wait)
         self._last = self.clock()
         _count(conn, "off_api")
-        return sources.open_food_facts(code, self.fetch) is not None
-
-    def close(self):
-        if self.conn is not None:
-            self.conn.close()
+        return sources.open_food_facts(keys[0], self.fetch) is not None
 
 
 def classify(conn, product, off_check):
-    """("in_db" | "in_off" | "staged" | "non_food" | "no_barcode", barcode or None)."""
+    """(status, keys). Status is "in_db" | "in_off" | "staged" | "non_food" | "store_code" |
+    "no_barcode"; keys are the product's barcode readings, most likely first."""
     keys = kroger_keys(product.get("upc") or product.get("productId"))
     if not keys:
-        return "no_barcode", None
+        return "no_barcode", []
+    if is_store_code(keys[0]):
+        return "store_code", keys
     if not is_food(product.get("categories")):
-        return "non_food", keys[0]
-    for k in keys:
-        if in_products(conn, k):
-            return "in_db", k
-    if off_check(conn, keys[0]):
-        return "in_off", keys[0]
-    return "staged", keys[0]
+        return "non_food", keys
+    if any(in_products(conn, k) for k in keys):
+        return "in_db", keys
+    if off_check(conn, keys):
+        return "in_off", keys
+    return "staged", keys
 
 
 def stage(conn, code, product):
-    """Queue a product for research and review, with what Kroger says about it."""
+    """Queue a product for research and review, with what Kroger says about it.
+    Returns False if the barcode is already staged (scanned by a shopper, or staged before)."""
     p = parse_product(product)
     draft = {k: v for k, v in {"name": p["description"], "brand": p["brand"], "package_size": p["size"],
                                "image_url": p["image_url"], "category": p["category"]}.items() if v}
@@ -186,13 +204,15 @@ def crawl_step(conn, client, off_check, settings):
         stats["products"] += 1
         if not pid or conn.execute("SELECT 1 FROM catalog.seen WHERE product_id = %s", (pid,)).fetchone():
             continue
-        status, code = classify(conn, product, off_check)
-        if status == "staged" and not stage(conn, code, product):
+        status, keys = classify(conn, product, off_check)
+        if status == "staged" and not stage(conn, keys[0], product):
             status = "already_staged"  # a shopper scanned it first
-        conn.execute("INSERT INTO catalog.seen (product_id, code, term, status, brand, name, category) "
-                     "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                     (pid, code and key(code), term, status, product.get("brand"), product.get("description"),
-                      (product.get("categories") or [None])[0]))
+        conn.execute(
+            """INSERT INTO catalog.seen (product_id, code, keys, food, term, status, brand, name, category, raw)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+            (pid, keys[0] if keys else None, keys, is_food(product.get("categories")), term, status,
+             product.get("brand"), product.get("description"), (product.get("categories") or [None])[0],
+             Jsonb(product)))
         stats["new"] += 1
         stats["staged"] += status == "staged"
     finished = len(page) < PAGE or start + PAGE > MAX_START
@@ -242,35 +262,32 @@ def run(dsn, make_client, settings=None, sleep=time.sleep, log=print, max_steps=
     Sleeps until tomorrow when today's budgets are spent or every term is crawled."""
     import psycopg
     settings = settings or Settings()
-    off_check = off_check or OffCheck(settings.off_dsn)
+    off_check = off_check or OffCheck()
     client = make_client()
     steps = 0
-    try:
-        while max_steps is None or steps < max_steps:
-            steps += 1
-            with psycopg.connect(dsn) as conn:
-                crawled = None
-                if used(conn, "kroger") < settings.kroger_calls_per_day:
-                    try:
-                        crawled = crawl_step(conn, client, off_check, settings)
-                    except Exception as e:  # a bad page shouldn't stop the crawl
-                        conn.rollback()
-                        log(f"crawl error: {type(e).__name__}: {e}")
-                        crawled = {"error": True}
-                    if crawled and crawled.get("term_done"):
-                        log(f"'{crawled['term']}' done")
-                researched = None
+    while max_steps is None or steps < max_steps:
+        steps += 1
+        with psycopg.connect(dsn) as conn:
+            crawled = None
+            if used(conn, "kroger") < settings.kroger_calls_per_day:
                 try:
-                    researched = research_step(conn, settings)
-                except Exception as e:
+                    crawled = crawl_step(conn, client, off_check, settings)
+                except Exception as e:  # a bad page shouldn't stop the crawl
                     conn.rollback()
-                    log(f"research error: {type(e).__name__}: {e}")
-                if crawled is None and researched is None:
-                    s = status(conn)
-                    log(f"nothing to do now (terms {s['terms']['done']}/{s['terms']['total']}, "
-                        f"today {s['today']}); sleeping until tomorrow")
-                    sleep(seconds_until_tomorrow())
-                    continue
-            sleep(settings.seconds_per_call)
-    finally:
-        off_check.close()
+                    log(f"crawl error: {type(e).__name__}: {e}")
+                    crawled = {"error": True}
+                if crawled and crawled.get("term_done"):
+                    log(f"'{crawled['term']}' done")
+            researched = None
+            try:
+                researched = research_step(conn, settings)
+            except Exception as e:
+                conn.rollback()
+                log(f"research error: {type(e).__name__}: {e}")
+            if crawled is None and researched is None:
+                s = status(conn)
+                log(f"nothing to do now (terms {s['terms']['done']}/{s['terms']['total']}, "
+                    f"today {s['today']}); sleeping until tomorrow")
+                sleep(seconds_until_tomorrow())
+                continue
+        sleep(settings.seconds_per_call)

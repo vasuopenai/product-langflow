@@ -6,6 +6,7 @@
 #   lightsail.sh env           server .env: keys from your local .env plus generated secrets
 #   lightsail.sh deploy        ship the committed code, build, start, check https://API_DOMAIN
 #   lightsail.sh push-db       copy your local `food` database to the server (--replace to overwrite)
+#   lightsail.sh push-refs     copy the catalog gap finder's USDA/OFF barcode lists (docs/CATALOG_GAPS.md)
 # Day to day:
 #   lightsail.sh deploy | status | logs [service] | backup | keys | tunnel | ssh
 set -euo pipefail
@@ -123,6 +124,23 @@ case "$cmd" in
     if [ "${count:-0}" -gt 0 ]; then in_app "rm -f /opt/food-backups/upload-food.dump"; fi
     in_app "$COMPOSE up -d"
     health
+    ;;
+
+  push-refs)
+    # The catalog gap finder's barcode reference lists (full USDA and Open Food Facts), built
+    # locally with `python -m catalog_gaps build-refs`; a small upload instead of 9 GB of sources.
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    echo "== dumping catalog.usda_codes, catalog.off_codes, catalog.refs"
+    (cd "$ROOT" && docker compose exec -T db pg_dump -U postgres -Fc -Z 6 \
+       -t catalog.usda_codes -t catalog.off_codes -t catalog.refs food) > "$tmp/refs.dump"
+    echo "   dump is $(du -h "$tmp/refs.dump" | cut -f1)"
+    scp "${SSH_OPTS[@]}" "$tmp/refs.dump" "ubuntu@$LIGHTSAIL_HOST:/opt/food-backups/upload-refs.dump"
+    in_app "$COMPOSE exec -T db psql -U postgres food -qc 'CREATE SCHEMA IF NOT EXISTS catalog' \
+      && $COMPOSE cp /opt/food-backups/upload-refs.dump db:/tmp/refs.dump \
+      && $COMPOSE exec -T db pg_restore -U postgres -d food --clean --if-exists --no-owner /tmp/refs.dump \
+      && $COMPOSE exec -T db rm -f /tmp/refs.dump && rm -f /opt/food-backups/upload-refs.dump"
+    in_app "$COMPOSE exec -T db psql -U postgres food -c 'SELECT name, rows, built_at FROM catalog.refs'"
     ;;
 
   status)
