@@ -102,6 +102,11 @@ QUERY_SPEC_SCHEMA = {
             "labels_all": {"type": "array", "items": {"type": "string"}},
             "exclude_allergens": {"type": "array", "items": {"type": "string"}},
             "countries_any": {"type": "array", "items": {"type": "string"}},
+            "retailers_any": {
+                "type": "array",
+                "items": {"enum": ["kroger"]},
+                "description": "Only products known to be sold at one of these retailers.",
+            },
             "max_nova_group": {"type": "integer", "minimum": 1, "maximum": 4},
             "sort_by": {
                 "enum": ["relevance", "ingredients_n", "protein_g_serving", "protein_kcal_pct",
@@ -130,6 +135,7 @@ class QuerySpec:
     labels_all: list = field(default_factory=list)
     exclude_allergens: list = field(default_factory=list)
     countries_any: list = field(default_factory=list)
+    retailers_any: list = field(default_factory=list)
     max_nova_group: int | None = None
     sort_by: str = "relevance"
     limit: int = 10
@@ -199,6 +205,7 @@ def build_where(spec: QuerySpec, ph="?"):
     has_tag("label", spec.labels_all, all_=True)
     has_tag("allergen", spec.exclude_allergens, negate=True)
     has_tag("country", spec.countries_any)
+    has_tag("retailer", spec.retailers_any)
     for c in spec.nutrients:
         where.append(f"p.{_nutrient_column(c)} {c['op']} {ph}")
         params.append(c["value"])

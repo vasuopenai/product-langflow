@@ -18,6 +18,7 @@ Requested stage: **$ARGUMENTS** (empty means `smoke`).
 | `full` | load the full country with `--hnsw` | yes, largest |
 | `api` | start the API container and test `/health`, `/search`, `/ask` | yes, small |
 | `verify` | re-run the example questions and check answers against filters | yes, small |
+| `kroger` | find a store, crawl Kroger products, match to USDA and the store, report coverage | no (Kroger API is free; uses daily quota) |
 
 Run every stage before the requested one that hasn't passed yet. Stop at the
 first failure, diagnose it, fix what is clearly local (missing install, stopped
@@ -95,6 +96,23 @@ few minutes. When it finishes, run `verify`.
 2. `curl -s localhost:8000/health` → `ok: true` with the product count.
 3. After go-ahead, POST one question from `examples/questions.txt` to `/ask` and
    show the answer.
+
+## Stage: kroger
+
+Follow `docs/KROGER.md`. Needs `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET`
+in `.env` (check presence the same way as the OpenAI key; never print them).
+
+1. Ask the user for a ZIP code, run `PY -m off_products kroger-locations --zip <zip>`,
+   and let them pick a store.
+2. After go-ahead (it runs for a while and uses the day's Kroger quota):
+   `PY -m off_products kroger-crawl --location <id>` in the background. It is
+   resumable; if it stops at the daily budget, say so and stop.
+3. Ask the user for the path of their USDA dump, then
+   `PY -m off_products usda-index "<path>"`.
+4. `PY -m off_products kroger-match` (tags products in the Postgres store from
+   `DATABASE_URL`). Show the coverage table and explain it: share of Kroger
+   products already searchable ("in store"), share with labels only in USDA or
+   Kroger, and share with no label anywhere. Point to `data/kroger/coverage.csv`.
 
 ## Stage: verify (answer-quality check)
 
