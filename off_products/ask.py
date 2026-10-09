@@ -5,6 +5,7 @@ import os
 
 from .concepts import GROUPS
 from .pg import known_tags, search
+from .retail import retailer_info
 from .query import QUERY_SPEC_SCHEMA, QuerySpec
 from .usda import CATEGORY_IDS
 
@@ -101,7 +102,8 @@ def ground_spec(conn, spec):
     """Drop taxonomy ids that don't occur in the data; return notes on what changed."""
     notes = []
     for field, kind in (("categories_any", "category"), ("include_ingredients_all", "ingredient"),
-                        ("first_ingredient_any", "ingredient"), ("labels_all", "label")):
+                        ("first_ingredient_any", "ingredient"), ("labels_all", "label"),
+                        ("retailers_any", "retailer")):
         wanted = getattr(spec, field)
         kept = known_tags(conn, kind, wanted)
         dropped = [t for t in wanted if t not in kept]
@@ -119,6 +121,9 @@ def retrieve(conn, spec, embedder):
         notes.append(f"no match in categories {spec.categories_any}; searched all categories")
         spec.categories_any = []
         results = search(conn, spec, vector)
+    stores = retailer_info(conn, [r["code"] for r in results], ph="%s")
+    for r in results:
+        r["retailers"] = stores.get(r["code"], [])
     return results, notes
 
 
@@ -145,6 +150,7 @@ def _facts(r):
         "groups": {g: v["status"] for g, v in r["derived"]["groups"].items() if v["status"] != "none"},
         "free_of": [g for g, v in r["derived"]["groups"].items() if v["status"] == "none"],
         "labels": r["labels"][:10],
+        "retailers": r.get("retailers", []),
     }
 
 
