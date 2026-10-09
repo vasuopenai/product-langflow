@@ -219,3 +219,13 @@ def test_web_source_urls_must_be_links_and_off_categories_english_only():
     assert sources.web(NEW, FakeOpenAI.without_citations(text))["url"] == "https://fairlife.com/x"
     off = {"status": 1, "product": {"product_name": "x", "categories_tags": ["es:lacteos"]}}
     assert "category" not in sources.open_food_facts(NEW, fake_fetch({"openfoodfacts": (200, off)}))["draft"]
+
+
+def test_privacy_and_support_pages_fill_in_the_contact(monkeypatch):
+    from mobile_api import api, config
+    monkeypatch.setattr(config, "SUPPORT_EMAIL", "help@example.com")
+    for name in ("privacy", "support"):
+        body = api.page(name).body.decode()
+        assert 'href="mailto:help@example.com"' in body and "{{" not in body
+    monkeypatch.setattr(config, "SUPPORT_EMAIL", None)
+    assert "App Store page" in api.page("privacy").body.decode()

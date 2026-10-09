@@ -68,7 +68,7 @@ case "$cmd" in
       echo "MOBILE_APP_KEY=$app"
       echo "MOBILE_ADMIN_KEY=$admin"
       for k in OPENAI_API_KEY OFF_CHAT_MODEL KROGER_CLIENT_ID KROGER_CLIENT_SECRET KROGER_API_BASE \
-               KROGER_MAX_CALLS_PER_DAY USDA_API_KEY WEB_SEARCH_MODEL MOBILE_HOURLY_LIMIT; do
+               KROGER_MAX_CALLS_PER_DAY USDA_API_KEY WEB_SEARCH_MODEL MOBILE_HOURLY_LIMIT SUPPORT_EMAIL; do
         v=$(local_value "$k")
         if [ -n "$v" ]; then echo "$k=$v"; fi
       done

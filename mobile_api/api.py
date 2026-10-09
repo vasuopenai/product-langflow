@@ -20,12 +20,15 @@ Streamlit "Review" tab.
 
 import collections
 import contextlib
+import html
+import pathlib
 import threading
 import time
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import config, products, staging, stores, websearch
@@ -156,6 +159,27 @@ class Scan(BaseModel):
     lat: float | None = None
     lng: float | None = None
     location_id: str | None = None
+
+
+PAGES = pathlib.Path(__file__).parent / "pages"
+
+
+def page(name):
+    """A public page with the contact email and policy date filled in."""
+    email = html.escape(config.SUPPORT_EMAIL or "")
+    contact = f'<a href="mailto:{email}">{email}</a>' if email else "the support email on our App Store page"
+    text = (PAGES / f"{name}.html").read_text(encoding="utf-8")
+    return HTMLResponse(text.replace("{{CONTACT}}", contact).replace("{{UPDATED}}", html.escape(config.PRIVACY_UPDATED)))
+
+
+@app.get("/privacy", include_in_schema=False)
+def privacy():
+    return page("privacy")
+
+
+@app.get("/support", include_in_schema=False)
+def support():
+    return page("support")
 
 
 @app.get("/api/health")
