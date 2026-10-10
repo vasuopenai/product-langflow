@@ -190,6 +190,8 @@ def test_product_info_from_a_kroger_record():
     assert kp.completeness(draft) == "full"
     assert kp.package_grams("40 ct / 0.8 oz") == 40 * 0.8 * 28.3495  # 40 pouches of 0.8 oz
     assert kp.package_grams("12 fl oz") == 12 * 29.5735 and kp.package_grams("16 oz") == 16 * 28.3495
+    assert kp.package_grams("8 pk / 0.11 oz") == 8 * 0.11 * 28.3495
+    assert kp.package_grams("295 pieces / 82.36 oz") == 82.36 * 28.3495  # the bag weighs 82 oz in all
     assert kp.completeness(kp.product_info({"description": "Mystery", "nutritionInformation": ""})) == "basic"
 
 
