@@ -36,11 +36,13 @@ from .barcodes import key
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
+    from catalog_gaps import finder as catalog
     from kroger_sync import sync as kroger_sync
     with _conn() as conn:
         staging.init_schema(conn)
         websearch.init_schema(conn)
         kroger_sync.init_schema(conn)
+        catalog.init_schema(conn)  # the admin catalog-gap endpoints read it, even before a crawl
     yield
 
 
@@ -237,7 +239,8 @@ def scan(body: Scan, client_id: str = Depends(app_auth)):
             return {"status": "found", "product": with_kroger(conn, [products.card(rec)], body.location_id)[0]}
         is_new = staging.note_scan(conn, body.barcode)
         staged = staging.get(conn, body.barcode)
-        if is_new or staged["status"] == "error":
+        # "queued": staged by the catalog gap finder, not researched yet; a shopper is waiting now.
+        if is_new or staged["status"] in ("error", "queued"):
             spend(client_id)
             if not is_new:
                 conn.execute("UPDATE staging.scanned_products SET status = 'researching' WHERE barcode = %s",
@@ -324,3 +327,45 @@ def review_research(barcode: str):
             raise HTTPException(404, "not in the review queue")
         started = staging.restart_research(conn, config.dsn(), barcode)
         return {"status": "researching", "started": started}
+
+
+# --- catalog gaps (Kroger catalog vs USDA / Open Food Facts / our app; see docs/CATALOG_GAPS.md) ----
+
+class StageGroup(BaseModel):
+    group: str
+    category: str | None = None
+    brand: str | None = None
+    limit: int | None = None
+    dry_run: bool = False
+
+
+def _catalog_call(fn):
+    from catalog_gaps import gaps
+    with _conn() as conn:
+        try:
+            return fn(conn, gaps)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.get("/admin/catalog/report", dependencies=[Depends(admin_auth)])
+def catalog_report():
+    def run(conn, gaps):
+        r = gaps.report(conn)
+        r["group_labels"] = {g: label for g, (_, label) in gaps.GROUPS.items()}
+        r["categories"] = gaps.categories(conn)
+        return r
+    return _catalog_call(run)
+
+
+@app.get("/admin/catalog/products", dependencies=[Depends(admin_auth)])
+def catalog_products(group: str | None = None, category: str | None = None, brand: str | None = None,
+                     q: str | None = None, limit: int = 100, offset: int = 0):
+    return _catalog_call(lambda conn, gaps: gaps.products(
+        conn, group or None, category or None, brand or None, q or None, min(limit, 500), offset))
+
+
+@app.post("/admin/catalog/stage", dependencies=[Depends(admin_auth)])
+def catalog_stage(body: StageGroup):
+    return _catalog_call(lambda conn, gaps: gaps.stage_group(
+        conn, body.group, body.category or None, body.brand or None, body.limit, body.dry_run))

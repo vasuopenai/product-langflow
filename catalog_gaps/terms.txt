@@ -1,0 +1,183 @@
+# Kroger product searches for the catalog gap finder, one per line. Kroger returns about
+# 250 products per term, so specific terms reach more of the catalog. Add more any time:
+#   python -m catalog_gaps add-terms my_terms.txt
+
+# Snacks
+potato chips
+kettle chips
+tortilla chips
+veggie chips
+pita chips
+crackers
+rice cakes
+pretzels
+popcorn
+cheese puffs
+pork rinds
+trail mix
+mixed nuts
+almonds
+cashews
+peanuts
+pistachios
+dried fruit
+fruit snacks
+beef jerky
+meat sticks
+seaweed snacks
+
+# Bars and sweets
+protein bar
+granola bar
+energy bar
+nut bar
+fruit bar
+dark chocolate
+milk chocolate
+candy bar
+gummy candy
+hard candy
+mints
+chewing gum
+cookies
+sandwich cookies
+brownies
+snack cakes
+donuts
+
+# Breakfast
+cereal
+granola
+oatmeal
+instant oatmeal
+pancake mix
+waffles
+toaster pastries
+breakfast bars
+syrup
+
+# Bakery and bread
+bread
+whole wheat bread
+gluten free bread
+bagels
+english muffins
+tortillas
+wraps
+hamburger buns
+croissants
+muffins
+
+# Dairy and eggs
+milk
+oat milk
+almond milk
+soy milk
+lactose free milk
+yogurt
+greek yogurt
+kefir
+butter
+cheese
+shredded cheese
+cream cheese
+cottage cheese
+sour cream
+coffee creamer
+eggs
+plant based cheese
+
+# Meat, seafood and alternatives
+bacon
+sausage
+hot dogs
+deli meat
+chicken breast
+ground beef
+ground turkey
+frozen chicken
+salmon
+tuna
+canned salmon
+shrimp
+plant based burger
+tofu
+tempeh
+
+# Frozen
+frozen pizza
+frozen meals
+frozen burritos
+frozen vegetables
+frozen fruit
+ice cream
+frozen yogurt
+popsicles
+frozen breakfast
+frozen dumplings
+
+# Pantry
+pasta
+gluten free pasta
+rice
+quinoa
+beans
+canned beans
+lentils
+canned vegetables
+canned tomatoes
+pasta sauce
+soup
+broth
+mac and cheese
+ramen
+instant noodles
+peanut butter
+almond butter
+jam
+honey
+olive oil
+avocado oil
+cooking oil
+vinegar
+flour
+sugar
+baking mix
+chocolate chips
+spices
+salt
+ketchup
+mustard
+mayonnaise
+salad dressing
+hot sauce
+barbecue sauce
+salsa
+hummus
+pickles
+olives
+
+# Drinks
+sparkling water
+soda
+diet soda
+juice
+orange juice
+sports drink
+energy drink
+iced tea
+coffee
+ground coffee
+coffee pods
+tea
+kombucha
+protein shake
+protein powder
+electrolyte drink
+coconut water
+
+# Baby and kids
+baby food
+baby snacks
+toddler snacks
+kids yogurt

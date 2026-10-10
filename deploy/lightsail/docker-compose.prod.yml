@@ -33,6 +33,10 @@ services:
       # Keys are required in production: the app sends X-App-Key, the review UI X-Admin-Key.
       MOBILE_APP_KEY: ${MOBILE_APP_KEY:?set MOBILE_APP_KEY in .env}
       MOBILE_ADMIN_KEY: ${MOBILE_ADMIN_KEY:?set MOBILE_ADMIN_KEY in .env}
+  catalog:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${APP_DB:-food}
   caddy:
     image: caddy:2
     restart: unless-stopped
