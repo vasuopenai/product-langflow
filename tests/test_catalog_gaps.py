@@ -216,3 +216,25 @@ def test_capped_searches_split_by_brand_and_new_brands_are_queued(conn):
     assert client.calls[-1] == ("yogurt", "Chobani", 1)
     s = finder.status(conn)
     assert s["searches"]["term"]["capped"] == 1 and s["searches"]["brand"]["done"] == 2
+
+
+@pg
+def test_searches_kroger_rejects_are_given_up_and_counted(conn):
+    from kroger_sync.client import KrogerError
+
+    class Rejecting(FakeKroger):
+        def search(self, term, start=1, limit=50, location_id=None, brand=None):
+            self.calls.append(term)
+            raise KrogerError("GET /products failed (400): term not accepted")
+
+    finder.add_terms(conn, ["4C", "granola"])  # "4C": too short for Kroger, never sent
+    client = Rejecting({})
+    settings = finder.Settings({})
+    first = finder.crawl_step(conn, client, lambda c, keys: True, settings)
+    assert first["term"] == "4C" and first["term_done"] and client.calls == []
+    second = finder.crawl_step(conn, client, lambda c, keys: True, settings)
+    assert second["term"] == "granola" and "400" in second["error"] and client.calls == ["granola"]
+    assert finder.crawl_step(conn, client, lambda c, keys: True, settings) is None  # nothing retried forever
+    assert finder.used(conn, "kroger") == 1  # the failed call counts toward the daily budget
+    errors = dict(conn.execute("SELECT term, error FROM catalog.terms").fetchall())
+    assert "3 to 127 characters" in errors["4C"] and "400" in errors["granola"]

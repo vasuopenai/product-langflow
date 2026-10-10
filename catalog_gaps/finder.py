@@ -19,6 +19,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
+from kroger_sync.client import KrogerError
 from kroger_sync.gtin import kroger_keys
 from mobile_api import sources, staging
 from mobile_api.barcodes import key, store_variants
@@ -68,6 +69,7 @@ SCHEMA = [
     "ALTER TABLE catalog.terms ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE catalog.terms ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'term'",
     "ALTER TABLE catalog.terms ADD COLUMN IF NOT EXISTS capped BOOLEAN",
+    "ALTER TABLE catalog.terms ADD COLUMN IF NOT EXISTS error TEXT",  # why Kroger rejected the search
     """DO $$ BEGIN
          IF (SELECT array_length(indkey::int2[], 1) FROM pg_index
              WHERE indrelid = 'catalog.terms'::regclass AND indisprimary) = 1 THEN
@@ -227,6 +229,18 @@ def split(conn, term, brand, kind):
     return 0  # a split that's still capped stays as it is
 
 
+def usable_term(term):
+    return 3 <= len((term or "").strip()) < 128
+
+
+def give_up(conn, term, brand, reason, stats):
+    """Mark a search done without results (Kroger rejects it), keeping the reason."""
+    conn.execute("UPDATE catalog.terms SET done_at = now(), next_start = 1, capped = false, error = %s "
+                 "WHERE term = %s AND brand = %s", (reason, term, brand))
+    conn.commit()
+    return {**stats, "term_done": True, "error": reason}
+
+
 def crawl_step(conn, client, off_check, settings):
     """Fetch and sort one page of one search. Returns stats, or None when every search is done."""
     from kroger_sync import sync as kroger_sync
@@ -235,10 +249,20 @@ def crawl_step(conn, client, off_check, settings):
         return None
     term, brand, start = row
     kind = conn.execute("SELECT kind FROM catalog.terms WHERE term = %s AND brand = %s", (term, brand)).fetchone()[0]
-    page = client.search(term, start=start, limit=PAGE, brand=brand or None)
+    stats = {"term": term, "brand": brand, "start": start, "products": 0, "new": 0, "staged": 0, "queued": 0}
+    if not usable_term(term):
+        return give_up(conn, term, brand, "Kroger needs a search term of 3 to 127 characters", stats)
+    try:
+        page = client.search(term, start=start, limit=PAGE, brand=brand or None)
+    except KrogerError as e:
+        _count(conn, "kroger")  # failed calls count too: Kroger's daily limit is shared with the app
+        kroger_sync._add_calls(conn, 1)
+        if "(400)" in str(e):  # Kroger will never accept this search; don't retry it
+            return give_up(conn, term, brand, str(e)[:300], stats)
+        conn.commit()
+        raise
     _count(conn, "kroger")
     kroger_sync._add_calls(conn, 1)  # Kroger's daily limit is shared with the app's price lookups
-    stats = {"term": term, "brand": brand, "start": start, "products": 0, "new": 0, "staged": 0, "queued": 0}
     page_brands = {}
     for product in page:
         b = (product.get("brand") or "").strip()
