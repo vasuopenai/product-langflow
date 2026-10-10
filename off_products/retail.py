@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 
 from .gtin import key
 from .kroger import iter_crawled
-from .usda import lookup
+from .usda_index import lookup
 
 RETAILER_ITEMS_DDL = (
     "CREATE TABLE IF NOT EXISTS retailer_items (code TEXT, retailer TEXT, retailer_product_id TEXT, "
