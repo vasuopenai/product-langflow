@@ -62,13 +62,21 @@ def panel(product):
     return next((b for b in blocks if b.get("nutrients")), blocks[0] if blocks else {})
 
 
+COUNT = re.compile(r"(\d+(?:\.\d+)?)\s*ct\b", re.I)
+
+
 def package_grams(size):
-    """Net contents in grams from Kroger's size text ('16 oz', '12 fl oz', '6 ct / 1.5 oz' -> per item)."""
+    """Net contents in grams from Kroger's size text: '16 oz', '12 fl oz', or 'N ct / X oz'
+    (N items of X oz each, e.g. '40 ct / 0.8 oz' is 40 pouches of 0.8 oz)."""
     m = PACKAGE.search(size or "")
     if not m:
         return None
     unit = re.sub(r"\s+", " ", m.group(2).lower().replace(".", ""))
-    return float(m.group(1)) * PACKAGE_G.get(unit, 0) or None
+    grams = float(m.group(1)) * PACKAGE_G.get(unit, 0)
+    count = COUNT.search((size or "")[:m.start()])  # a count before the weight multiplies it
+    if count and "/" in (size or "")[count.end():m.start()]:
+        grams *= float(count.group(1))
+    return grams or None
 
 
 def serving(product, block=None):

@@ -47,6 +47,7 @@ def main(argv=None):
     t = sub.add_parser("add-terms")
     t.add_argument("file")
     sub.add_parser("refresh-drafts", help="rebuild queued drafts from the stored Kroger records")
+    sub.add_parser("reclassify", help="re-check stored products against the non-food departments")
     ic = sub.add_parser("info", help="how complete Kroger's product information is for a group")
     ic.add_argument("group", nargs="?", default="not_in_usda", choices=list(gaps.GROUPS))
     rq = sub.add_parser("requeue", help="search a kind again (stored products are skipped)")
@@ -80,6 +81,9 @@ def main(argv=None):
             print(json.dumps(finder.status(conn), indent=2))
         elif args.cmd == "add-terms":
             print(f"added {finder.add_terms(conn, finder.read_terms(args.file))} new terms")
+        elif args.cmd == "reclassify":
+            marked, removed = finder.reclassify_food(conn)
+            print(f"{marked} products are non-food; {removed} taken out of the review queue")
         elif args.cmd == "refresh-drafts":
             print(json.dumps(gaps.refresh_drafts(conn)))
         elif args.cmd == "info":

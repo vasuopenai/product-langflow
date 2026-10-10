@@ -35,7 +35,24 @@ TERMS_FILE = Path(__file__).with_name("terms.txt")
 # categories are non-food (baby food, for example, stays).
 NON_FOOD = ("beauty", "personal care", "health", "pharmacy", "cleaning", "household", "laundry", "paper",
             "pet", "kitchen", "home", "garden", "party", "office", "electronics", "toys", "apparel",
-            "automotive", "tobacco", "hardware", "seasonal decor", "floral")
+            "automotive", "tobacco", "hardware", "seasonal decor", "floral", "sporting", "entertainment",
+            "clothing", "shoes", "jewelry", "books", "magazines", "crafts", "outdoor", "furniture", "bed & bath",
+            "gift card", "school", "tools", "lawn", "baby care", "diapers")
+
+
+def reclassify_food(conn):
+    """Re-check stored products against NON_FOOD (after the list grows): products that are now
+    non-food are marked so, and taken out of the review queue if the crawl staged them.
+    Returns (products marked non-food, removed from the queue)."""
+    rows = conn.execute("SELECT product_id, keys, raw->'categories' FROM catalog.seen WHERE food AND raw IS NOT NULL").fetchall()
+    gone = [(pid, keys) for pid, keys, cats in rows if not is_food(cats if isinstance(cats, list) else [])]
+    removed = 0
+    for pid, keys in gone:
+        conn.execute("UPDATE catalog.seen SET food = false, status = 'non_food' WHERE product_id = %s", (pid,))
+        removed += conn.execute("DELETE FROM staging.scanned_products WHERE barcode = ANY(%s) AND status = 'queued' "
+                                "AND found_via = %s", (keys or [], FOUND_VIA)).rowcount
+    conn.commit()
+    return len(gone), removed
 
 SCHEMA = [
     "CREATE SCHEMA IF NOT EXISTS catalog",
