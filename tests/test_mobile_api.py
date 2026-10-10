@@ -199,6 +199,33 @@ def test_reject_and_app_key(api, monkeypatch):
 
 
 @pg
+def test_bulk_approve_previews_then_adds_full_drafts(api):
+    from psycopg.types.json import Jsonb
+    full = {"name": "Almond Butter", "brand": "Simple Truth", "category": "Natural & Organic",
+            "ingredients": "Dry Roasted Almonds, Sea Salt.", "serving_size_g": 32, "serving_unit": "g",
+            "nutrients_100g": {"energy_kcal": 594, "protein_g": 21.9, "fat_g": 53, "carbs_g": 18.8, "sugars_g": 3.1}}
+    partial = {"name": "Mystery Chips", "brand": "B", "ingredients": "Potatoes, Oil, Salt."}
+    impossible = {**full, "name": "Bad Label", "nutrients_100g": {"energy_kcal": 5000, "protein_g": 150}}
+    kroger = {"kroger": {"url": None, "raw": {"productPageURI": "/p/almond-butter/0001111012345"}}}
+    with psycopg.connect(DSN) as c:
+        for code, draft in (("11110123450", full), ("36000291452", partial), ("77777777779", impossible)):
+            c.execute("INSERT INTO staging.scanned_products (barcode, status, draft, sources, found_via) "
+                      "VALUES (%s, 'queued', %s, %s, 'kroger_catalog')", (code, Jsonb(draft), Jsonb(kroger)))
+
+    preview = api.post("/admin/review/bulk", json={"found_via": "kroger_catalog"}).json()  # dry run by default
+    assert preview["matching"] == 2 and {s["name"] for s in preview["sample"]} == {"Almond Butter", "Bad Label"}
+    assert api.post("/admin/review/bulk", json={"full_only": False}).json()["matching"] == 3
+
+    done = api.post("/admin/review/bulk", json={"found_via": "kroger_catalog", "dry_run": False}).json()
+    assert done == {"approved": 1, "skipped": {"impossible nutrition": 1}, "still_matching": 1}
+    product = api.get("/api/products/011110123450").json()
+    assert product["name"] == "Almond Butter" and product["origin"] == "kroger"
+    assert product["url"] == "https://www.kroger.com/p/almond-butter/0001111012345"
+    statuses = dict(psycopg.connect(DSN).execute("SELECT barcode, status FROM staging.scanned_products").fetchall())
+    assert statuses == {"11110123450": "approved", "36000291452": "queued", "77777777779": "queued"}
+
+
+@pg
 def test_kroger_cache_is_per_store(api):
     from kroger_sync import sync as ksync
     from kroger_sync.client import KrogerClient

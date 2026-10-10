@@ -31,7 +31,12 @@ SCHEMA = [
         client_id TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, location_id TEXT,
         found BOOLEAN NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS scan_events_barcode ON staging.scan_events (barcode)",
+    # Where a staged product came from: a shopper's scan (NULL) or the Kroger catalog crawl.
+    "ALTER TABLE staging.scanned_products ADD COLUMN IF NOT EXISTS found_via TEXT",
 ]
+# found_via -> the product's origin once approved (shown in the app; "scan" says "Added from a scan").
+ORIGINS = {None: "scan", "kroger_catalog": "kroger"}
+KROGER_SITE = "https://www.kroger.com"
 # Order sources are trusted in, per field: the label data USDA holds first.
 SOURCE_ORDER = ["usda", "open_food_facts", "web", "kroger"]
 REVIEW_FIELDS = ["name", "brand", "brand_owner", "ingredients", "category", "serving_size_g", "serving_unit",
@@ -195,11 +200,14 @@ def counts(conn):
 
 # --- approve / reject ------------------------------------------------------------------
 
-def to_usda_row(barcode, draft, staged_sources=None):
+def to_usda_row(barcode, draft, staged_sources=None, origin="scan"):
     """A reviewed draft as the USDA-shaped row the loader turns into a product record."""
     k = key(barcode)
     usda = (staged_sources or {}).get("usda") or {}
     urls = [s.get("url") for s in (staged_sources or {}).values() if s and s.get("url")]
+    kroger_page = (((staged_sources or {}).get("kroger") or {}).get("raw") or {}).get("productPageURI")
+    if not urls and kroger_page:
+        urls = [KROGER_SITE + kroger_page]
     unit = (draft.get("serving_unit") or "g").lower()
     nutrients = {sources.USDA_IDS[n]: v for n, v in (draft.get("nutrients_100g") or {}).items()
                  if n in sources.USDA_IDS and v is not None}
@@ -221,7 +229,7 @@ def to_usda_row(barcode, draft, staged_sources=None):
         "nutrients": nutrients,
         "off": {"labels": draft.get("labels") or [], "image_url": draft.get("image_url"),
                 "nova_group": None, "unique_scans_n": 0, "allergens": []},
-        "origin": "scan",
+        "origin": origin,
         "url": urls[0] if urls else None,
         "sources": {name: s.get("url") for name, s in (staged_sources or {}).items() if s},
     }
@@ -244,7 +252,9 @@ def approve(conn, barcode, edits=None, embedder=None, note=None):
         draft["nutrients_100g"] = {**((staged["draft"] or {}).get("nutrients_100g") or {}), **edits["nutrients_100g"]}
     if not draft.get("name"):
         raise ApproveError("a product name is required")
-    record = usda.normalize(to_usda_row(barcode, draft, staged["sources"]))
+    found_via = conn.execute("SELECT found_via FROM staging.scanned_products WHERE barcode = %s",
+                             (key(barcode),)).fetchone()[0]
+    record = usda.normalize(to_usda_row(barcode, draft, staged["sources"], ORIGINS.get(found_via, "scan")))
     if record["nutrition"]["implausible"] and record["nutrition"]["per_100g"]["energy_kcal"] is None:
         raise ApproveError("nutrition values look impossible: " + "; ".join(record["nutrition"]["implausible"]))
     embedder = embedder or make_embedder(config.env("OFF_EMBEDDER", "openai"))
@@ -262,3 +272,86 @@ def reject(conn, barcode, note=None):
     conn.execute("UPDATE staging.scanned_products SET status = 'rejected', reviewed_at = now(), review_note = %s "
                  "WHERE barcode = %s", (note, key(barcode)))
     conn.commit()
+
+
+# --- bulk approve ----------------------------------------------------------------------
+
+BULK_MAX = 1000  # per request: embeddings and inserts for this many take well under a minute
+# "Full" information: ingredients and per-100 g nutrition with energy (what search filters need).
+FULL_INFO = "draft ? 'ingredients' AND draft->'nutrients_100g' ? 'energy_kcal'"
+
+
+def _bulk_where(status="queued", found_via=None, full_only=True, category=None, brand=None):
+    where, params = ["status = %s", "draft ? 'name'"], [status]
+    if found_via == "scan":
+        where.append("found_via IS NULL")
+    elif found_via:
+        where.append("found_via = %s")
+        params.append(found_via)
+    if full_only:
+        where.append(FULL_INFO)
+    if category:
+        where.append("draft->>'category' ILIKE %s")
+        params.append(f"%{category}%")
+    if brand:
+        where.append("draft->>'brand' ILIKE %s")
+        params.append(f"%{brand}%")
+    return " AND ".join(where), params
+
+
+def _summary(barcode, draft):
+    n = draft.get("nutrients_100g") or {}
+    return {"barcode": barcode, "name": draft.get("name"), "brand": draft.get("brand"),
+            "category": draft.get("category"), "image_url": draft.get("image_url"),
+            "ingredients": (draft.get("ingredients") or "")[:200] or None, "serving": draft.get("serving_text"),
+            "serving_size_g": draft.get("serving_size_g"),
+            **{k: n.get(k) for k in ("energy_kcal", "protein_g", "sugars_g", "sodium_mg")}}
+
+
+def bulk_preview(conn, sample=20, **filters):
+    """How many staged products match, and a random sample to spot-check."""
+    where, params = _bulk_where(**filters)
+    total = conn.execute(f"SELECT count(*) FROM staging.scanned_products WHERE {where}", params).fetchone()[0]
+    rows = conn.execute(f"SELECT barcode, draft FROM staging.scanned_products WHERE {where} "
+                        "ORDER BY random() LIMIT %s", params + [sample]).fetchall()
+    return {"matching": total, "sample": [_summary(b, d) for b, d in rows]}
+
+
+def bulk_approve(conn, limit=BULK_MAX, embedder=None, note=None, chunk=200, **filters):
+    """Approve up to `limit` matching staged products as they are (their drafts), in batches.
+    Products whose nutrition looks impossible are skipped and stay in the queue."""
+    from off_products import usda
+    from off_products.pg import init_schema as init_products, make_embedder, upsert_batch
+
+    where, params = _bulk_where(**filters)
+    rows = conn.execute(f"SELECT barcode, draft, sources, found_via FROM staging.scanned_products WHERE {where} "
+                        "ORDER BY first_scanned LIMIT %s", params + [min(limit or BULK_MAX, BULK_MAX)]).fetchall()
+    embedder = embedder or make_embedder(config.env("OFF_EMBEDDER", "openai"))
+    init_products(conn, embedder.dim)
+    approved, skipped = 0, {}
+    batch = []
+
+    def flush():
+        nonlocal approved
+        if not batch:
+            return
+        upsert_batch(conn, [record for _, record in batch], embedder)
+        for barcode, record in batch:
+            conn.execute(
+                """UPDATE staging.scanned_products SET status = 'approved', reviewed_at = now(), review_note = %s,
+                     product_code = %s WHERE barcode = %s""", (note or "bulk approve", record["code"], barcode))
+        conn.commit()
+        approved += len(batch)
+        batch.clear()
+
+    for barcode, draft, staged_sources, found_via in rows:
+        record = usda.normalize(to_usda_row(barcode, draft or {}, staged_sources, ORIGINS.get(found_via, "scan")))
+        if record["nutrition"]["implausible"] and record["nutrition"]["per_100g"]["energy_kcal"] is None:
+            skipped["impossible nutrition"] = skipped.get("impossible nutrition", 0) + 1
+            continue
+        batch.append((barcode, record))
+        if len(batch) >= chunk:
+            flush()
+    flush()
+    remaining = conn.execute(f"SELECT count(*) FROM staging.scanned_products WHERE {where}", params).fetchone()[0]
+    return {"approved": approved, "skipped": skipped, "still_matching": remaining}
