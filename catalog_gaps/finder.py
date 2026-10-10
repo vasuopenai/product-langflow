@@ -13,6 +13,7 @@ catalog.usage. Re-running picks up where it stopped.
 """
 
 import datetime as dt
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -112,13 +113,29 @@ class Settings:
         self.recrawl_days = int(env.get("CATALOG_RECRAWL_DAYS", "30"))
 
 
-def init_schema(conn):
+def _schema_version():
     from kroger_sync import sync as kroger_sync
+    text = "\n".join(SCHEMA + staging.SCHEMA + list(kroger_sync.SCHEMA))
+    return hashlib.sha1(text.encode()).hexdigest()
+
+
+def init_schema(conn):
+    """Create or migrate the tables, only when the schema changed: ALTER TABLE takes locks that
+    deadlock with a running crawler, so commands run while it works must not repeat them."""
+    from kroger_sync import sync as kroger_sync
+    version = _schema_version()
+    if conn.execute("SELECT to_regclass('catalog.schema_version')").fetchone()[0]:
+        row = conn.execute("SELECT version FROM catalog.schema_version").fetchone()
+        if row and row[0] == version:
+            return
     staging.init_schema(conn)
     kroger_sync.init_schema(conn)  # kroger.calls: the daily Kroger call count shared with the app
     for sql in SCHEMA:
         conn.execute(sql)
     queue_brands(conn)
+    conn.execute("CREATE TABLE IF NOT EXISTS catalog.schema_version (version TEXT NOT NULL)")
+    conn.execute("DELETE FROM catalog.schema_version")
+    conn.execute("INSERT INTO catalog.schema_version VALUES (%s)", (version,))
     conn.commit()
 
 
