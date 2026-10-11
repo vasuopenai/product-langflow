@@ -188,7 +188,10 @@ def test_product_info_from_a_kroger_record():
     assert draft["nutrients_100g"]["energy_kcal"] == round(190 * 100 / (16 * 28.3495 / 14), 3)
     assert draft["labels"] == ["en:organic"] and draft["allergens"] == "Tree nuts"
     assert kp.completeness(draft) == "full"
-    assert kp.package_grams("6 ct / 1.5 oz") == 1.5 * 28.3495 and kp.package_grams("12 fl oz") == 12 * 29.5735
+    assert kp.package_grams("40 ct / 0.8 oz") == 40 * 0.8 * 28.3495  # 40 pouches of 0.8 oz
+    assert kp.package_grams("12 fl oz") == 12 * 29.5735 and kp.package_grams("16 oz") == 16 * 28.3495
+    assert kp.package_grams("8 pk / 0.11 oz") == 8 * 0.11 * 28.3495
+    assert kp.package_grams("295 pieces / 82.36 oz") == 82.36 * 28.3495  # the bag weighs 82 oz in all
     assert kp.completeness(kp.product_info({"description": "Mystery", "nutritionInformation": ""})) == "basic"
 
 
@@ -238,3 +241,15 @@ def test_searches_kroger_rejects_are_given_up_and_counted(conn):
     assert finder.used(conn, "kroger") == 1  # the failed call counts toward the daily budget
     errors = dict(conn.execute("SELECT term, error FROM catalog.terms").fetchall())
     assert "3 to 127 characters" in errors["4C"] and "400" in errors["granola"]
+
+
+@pg
+def test_reclassify_takes_new_non_food_out_of_the_queue(conn):
+    finder.add_terms(conn, ["ball"])
+    ball = kroger_item("0003600029145", "Soccer Ball", categories=("Snacks",))
+    finder.crawl_step(conn, FakeKroger({("ball", 1): [ball]}), lambda c, keys: False, finder.Settings({}))
+    assert conn.execute("SELECT count(*) FROM staging.scanned_products").fetchone()[0] == 1
+    conn.execute("""UPDATE catalog.seen SET raw = jsonb_set(raw, '{categories}', '["Sporting Goods"]')""")
+    assert finder.reclassify_food(conn) == (1, 1)
+    assert conn.execute("SELECT food, status FROM catalog.seen").fetchone() == (False, "non_food")
+    assert conn.execute("SELECT count(*) FROM staging.scanned_products").fetchone()[0] == 0

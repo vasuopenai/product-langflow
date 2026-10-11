@@ -283,6 +283,28 @@ class Reject(BaseModel):
     note: str | None = None
 
 
+class BulkApprove(BaseModel):
+    status: str = "queued"
+    found_via: str | None = None   # "kroger_catalog", "scan" (phone scans) or None (any)
+    full_only: bool = True         # only drafts with ingredients and per-100 g nutrition
+    category: str | None = None
+    brand: str | None = None
+    limit: int = staging.BULK_MAX
+    dry_run: bool = True           # preview by default; approving needs dry_run false
+    sample: int = 20
+    note: str | None = None
+
+
+@app.post("/admin/review/bulk", dependencies=[Depends(admin_auth)])
+def review_bulk(body: BulkApprove):
+    filters = {"status": body.status, "found_via": body.found_via, "full_only": body.full_only,
+               "category": body.category or None, "brand": body.brand or None}
+    with _conn() as conn:
+        if body.dry_run:
+            return staging.bulk_preview(conn, min(body.sample, 100), **filters)
+        return staging.bulk_approve(conn, body.limit, embedder(), body.note, **filters)
+
+
 @app.get("/admin/review", dependencies=[Depends(admin_auth)])
 def review_list(status: str | None = "pending", limit: int = 100):
     with _conn() as conn:

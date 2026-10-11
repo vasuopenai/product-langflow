@@ -13,6 +13,7 @@ catalog.usage. Re-running picks up where it stopped.
 """
 
 import datetime as dt
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -35,7 +36,24 @@ TERMS_FILE = Path(__file__).with_name("terms.txt")
 # categories are non-food (baby food, for example, stays).
 NON_FOOD = ("beauty", "personal care", "health", "pharmacy", "cleaning", "household", "laundry", "paper",
             "pet", "kitchen", "home", "garden", "party", "office", "electronics", "toys", "apparel",
-            "automotive", "tobacco", "hardware", "seasonal decor", "floral")
+            "automotive", "tobacco", "hardware", "seasonal decor", "floral", "sporting", "entertainment",
+            "clothing", "shoes", "jewelry", "books", "magazines", "crafts", "outdoor", "furniture", "bed & bath",
+            "gift card", "school", "tools", "lawn", "baby care", "diapers")
+
+
+def reclassify_food(conn):
+    """Re-check stored products against NON_FOOD (after the list grows): products that are now
+    non-food are marked so, and taken out of the review queue if the crawl staged them.
+    Returns (products marked non-food, removed from the queue)."""
+    rows = conn.execute("SELECT product_id, keys, raw->'categories' FROM catalog.seen WHERE food AND raw IS NOT NULL").fetchall()
+    gone = [(pid, keys) for pid, keys, cats in rows if not is_food(cats if isinstance(cats, list) else [])]
+    removed = 0
+    for pid, keys in gone:
+        conn.execute("UPDATE catalog.seen SET food = false, status = 'non_food' WHERE product_id = %s", (pid,))
+        removed += conn.execute("DELETE FROM staging.scanned_products WHERE barcode = ANY(%s) AND status = 'queued' "
+                                "AND found_via = %s", (keys or [], FOUND_VIA)).rowcount
+    conn.commit()
+    return len(gone), removed
 
 SCHEMA = [
     "CREATE SCHEMA IF NOT EXISTS catalog",
@@ -95,13 +113,29 @@ class Settings:
         self.recrawl_days = int(env.get("CATALOG_RECRAWL_DAYS", "30"))
 
 
-def init_schema(conn):
+def _schema_version():
     from kroger_sync import sync as kroger_sync
+    text = "\n".join(SCHEMA + staging.SCHEMA + list(kroger_sync.SCHEMA))
+    return hashlib.sha1(text.encode()).hexdigest()
+
+
+def init_schema(conn):
+    """Create or migrate the tables, only when the schema changed: ALTER TABLE takes locks that
+    deadlock with a running crawler, so commands run while it works must not repeat them."""
+    from kroger_sync import sync as kroger_sync
+    version = _schema_version()
+    if conn.execute("SELECT to_regclass('catalog.schema_version')").fetchone()[0]:
+        row = conn.execute("SELECT version FROM catalog.schema_version").fetchone()
+        if row and row[0] == version:
+            return
     staging.init_schema(conn)
     kroger_sync.init_schema(conn)  # kroger.calls: the daily Kroger call count shared with the app
     for sql in SCHEMA:
         conn.execute(sql)
     queue_brands(conn)
+    conn.execute("CREATE TABLE IF NOT EXISTS catalog.schema_version (version TEXT NOT NULL)")
+    conn.execute("DELETE FROM catalog.schema_version")
+    conn.execute("INSERT INTO catalog.schema_version VALUES (%s)", (version,))
     conn.commit()
 
 
