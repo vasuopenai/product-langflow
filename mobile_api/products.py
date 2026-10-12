@@ -20,8 +20,17 @@ def card(rec):
         "category": rec.get("main_category"),
         "categories": rec.get("categories") or [],
         "allergens": rec.get("allergens") or [],
-        "origin": (rec.get("source") or {}).get("origin") or "usda",
+        "origin": origin(rec),
     }
+
+
+def origin(rec):
+    """Where a product's data came from: "usda" (the USDA load), "scan" or "kroger" (approved
+    from the review queue), or "open_food_facts" (records loaded from OFF have no source block)."""
+    source = rec.get("source")
+    if not source:
+        return "open_food_facts"
+    return source.get("origin") or "usda"
 
 
 def find(conn, barcode):
