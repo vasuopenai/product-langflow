@@ -431,10 +431,11 @@ def run(dsn, make_client, settings=None, sleep=time.sleep, log=print, max_steps=
             except Exception as e:
                 conn.rollback()
                 log(f"research error: {type(e).__name__}: {e}")
-            if crawled is None and researched is None:
+            idle = crawled is None and researched is None
+            if idle:
                 s = status(conn)
                 log(f"nothing to do now (terms {s['terms']['done']}/{s['terms']['total']}, "
                     f"today {s['today']}); sleeping until tomorrow")
-                sleep(seconds_until_tomorrow())
-                continue
-        sleep(settings.seconds_per_call)
+        # Sleep only after the connection is closed: an open transaction holds locks that block
+        # schema changes elsewhere (it kept the gateway from starting for minutes).
+        sleep(seconds_until_tomorrow() if idle else settings.seconds_per_call)

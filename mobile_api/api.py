@@ -39,10 +39,17 @@ async def lifespan(app):
     from catalog_gaps import finder as catalog
     from kroger_sync import sync as kroger_sync
     with _conn() as conn:
-        staging.init_schema(conn)
-        websearch.init_schema(conn)
-        kroger_sync.init_schema(conn)
-        catalog.init_schema(conn)  # the admin catalog-gap endpoints read it, even before a crawl
+        # Schema changes wait for table locks; never let a long-running session elsewhere keep the
+        # gateway from starting. The tables already exist in practice, so start without them.
+        conn.execute("SET lock_timeout = '15s'")
+        try:
+            staging.init_schema(conn)
+            websearch.init_schema(conn)
+            kroger_sync.init_schema(conn)
+            catalog.init_schema(conn)  # the admin catalog-gap endpoints read it, even before a crawl
+        except (psycopg.errors.LockNotAvailable, psycopg.errors.DeadlockDetected) as e:
+            conn.rollback()
+            print(f"schema setup skipped, tables are locked: {e}", flush=True)
     yield
 
 

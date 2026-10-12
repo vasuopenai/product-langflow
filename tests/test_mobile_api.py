@@ -282,3 +282,10 @@ def test_privacy_and_support_pages_fill_in_the_contact(monkeypatch):
         assert 'href="mailto:help@example.com"' in body and "{{" not in body
     monkeypatch.setattr(config, "SUPPORT_EMAIL", None)
     assert "App Store page" in api.page("privacy").body.decode()
+
+
+def test_card_origin_by_source():
+    from mobile_api.products import origin
+    assert origin({"source": {"name": "usda"}}) == "usda"
+    assert origin({"source": {"name": "usda", "origin": "kroger"}}) == "kroger"
+    assert origin({"code": "0018627116806"}) == "open_food_facts"  # loaded from an OFF export

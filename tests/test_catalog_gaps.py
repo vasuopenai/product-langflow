@@ -273,3 +273,20 @@ def test_splits_of_non_food_brands_are_skipped_and_not_rechecked(conn):
     conn.commit()
     assert finder.next_term(conn, 30)[1] != "NYX"                          # ...except the skipped split
     assert finder.split(conn, "NYX", "", "brand") == 0                     # and a capped NYX search isn't split
+
+
+@pg
+def test_crawler_sleeps_with_no_transaction_open(conn):
+    """An open transaction while sleeping blocked the gateway's schema setup for minutes."""
+    states = []
+
+    def sleep(seconds):
+        with psycopg.connect(DSN) as probe:
+            states.extend(s for (s,) in probe.execute(
+                "SELECT state FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()"))
+
+    conn.execute("UPDATE catalog.terms SET done_at = now()")  # nothing to do: it sleeps until tomorrow
+    conn.commit()
+    finder.run(DSN, lambda: FakeKroger({}), finder.Settings({}), sleep=sleep, log=lambda m: None,
+               max_steps=1, off_check=lambda c, keys: True)
+    assert "idle in transaction" not in states
