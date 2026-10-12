@@ -241,12 +241,24 @@ def stage(conn, code, product):
 
 
 def next_term(conn, recrawl_days):
-    """(term, brand, next start) of the next search: food terms, then brands, then splits."""
+    """(term, brand, next start) of the next search: food terms, then brands, then splits.
+    Searches Kroger rejected or that were skipped (error set) aren't searched again."""
     return conn.execute(
         """SELECT term, brand, next_start FROM catalog.terms
-           WHERE done_at IS NULL OR done_at < now() - make_interval(days => %s)
+           WHERE error IS NULL AND (done_at IS NULL OR done_at < now() - make_interval(days => %s))
            ORDER BY done_at NULLS FIRST, CASE kind WHEN 'term' THEN 0 WHEN 'brand' THEN 1 ELSE 2 END, term, brand
            LIMIT 1""", (recrawl_days,)).fetchone()
+
+
+FOOD_SHARE_MIN = 0.5  # a brand is "food" when at least half the products seen from it are food
+NON_FOOD_BRAND = "skipped: brand is mostly non-food"
+
+
+def food_brand(conn, brand):
+    """Whether most products seen from this brand are food (unknown brands count as food)."""
+    food, total = conn.execute("SELECT count(*) FILTER (WHERE food), count(*) FROM catalog.seen WHERE brand = %s",
+                               (brand,)).fetchone()
+    return not total or food >= FOOD_SHARE_MIN * total
 
 
 def split(conn, term, brand, kind):
@@ -257,6 +269,8 @@ def split(conn, term, brand, kind):
                  WHERE term = %s AND n >= 2 ON CONFLICT DO NOTHING"""
         return conn.execute(sql, (term, term)).rowcount
     if kind == "brand":
+        if not food_brand(conn, term):
+            return 0  # e.g. a makeup brand: food terms x this brand finds nothing worth the calls
         sql = """INSERT INTO catalog.terms (term, brand, kind) SELECT term, %s, 'split' FROM catalog.terms
                  WHERE kind = 'term' AND brand = '' ON CONFLICT DO NOTHING"""
         return conn.execute(sql, (term,)).rowcount
@@ -278,12 +292,20 @@ def give_up(conn, term, brand, reason, stats):
 def crawl_step(conn, client, off_check, settings):
     """Fetch and sort one page of one search. Returns stats, or None when every search is done."""
     from kroger_sync import sync as kroger_sync
-    row = next_term(conn, settings.recrawl_days)
-    if not row:
-        return None
-    term, brand, start = row
-    kind = conn.execute("SELECT kind FROM catalog.terms WHERE term = %s AND brand = %s", (term, brand)).fetchone()[0]
-    stats = {"term": term, "brand": brand, "start": start, "products": 0, "new": 0, "staged": 0, "queued": 0}
+    skipped = 0
+    while True:  # skip splits of non-food brands without a Kroger call (and without the pause)
+        row = next_term(conn, settings.recrawl_days)
+        if not row:
+            return {"idle": True, "skipped": skipped, "term_done": False} if skipped else None
+        term, brand, start = row
+        kind = conn.execute("SELECT kind FROM catalog.terms WHERE term = %s AND brand = %s", (term, brand)).fetchone()[0]
+        if kind == "split" and brand and not food_brand(conn, brand):
+            give_up(conn, term, brand, NON_FOOD_BRAND, {})
+            skipped += 1
+            continue
+        break
+    stats = {"term": term, "brand": brand, "start": start, "products": 0, "new": 0, "staged": 0, "queued": 0,
+             "skipped": skipped}
     if not usable_term(term):
         return give_up(conn, term, brand, "Kroger needs a search term of 3 to 127 characters", stats)
     try:
@@ -397,6 +419,8 @@ def run(dsn, make_client, settings=None, sleep=time.sleep, log=print, max_steps=
                     conn.rollback()
                     log(f"crawl error: {type(e).__name__}: {e}")
                     crawled = {"error": True}
+                if crawled and crawled.get("skipped"):
+                    log(f"skipped {crawled['skipped']} splits of mostly non-food brands")
                 if crawled and crawled.get("term_done"):
                     name = crawled["term"] + (f" + {crawled['brand']}" if crawled.get("brand") else "")
                     more = f", {crawled['queued']} more searches queued" if crawled.get("queued") else ""
