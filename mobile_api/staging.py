@@ -31,8 +31,14 @@ SCHEMA = [
         client_id TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, location_id TEXT,
         found BOOLEAN NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS scan_events_barcode ON staging.scan_events (barcode)",
-    # Where a staged product came from: a shopper's scan (NULL) or the Kroger catalog crawl.
-    "ALTER TABLE staging.scanned_products ADD COLUMN IF NOT EXISTS found_via TEXT",
+    # Where a staged product came from: a shopper's scan (NULL) or the Kroger catalog crawl. Added
+    # only when missing: even a no-op ALTER TABLE waits for an exclusive lock on the table.
+    """DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'staging'
+                        AND table_name = 'scanned_products' AND column_name = 'found_via') THEN
+           ALTER TABLE staging.scanned_products ADD COLUMN found_via TEXT;
+         END IF;
+       END $$""",
 ]
 # found_via -> the product's origin once approved (shown in the app; "scan" says "Added from a scan").
 ORIGINS = {None: "scan", "kroger_catalog": "kroger"}
