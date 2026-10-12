@@ -253,3 +253,23 @@ def test_reclassify_takes_new_non_food_out_of_the_queue(conn):
     assert finder.reclassify_food(conn) == (1, 1)
     assert conn.execute("SELECT food, status FROM catalog.seen").fetchone() == (False, "non_food")
     assert conn.execute("SELECT count(*) FROM staging.scanned_products").fetchone()[0] == 0
+
+
+@pg
+def test_splits_of_non_food_brands_are_skipped_and_not_rechecked(conn):
+    finder.add_terms(conn, ["juice"])
+    makeup = [kroger_item(f"00033333{i:05d}", f"Lipstick {i}", categories=("Beauty",), brand="NYX") for i in range(3)]
+    finder.crawl_step(conn, FakeKroger({("juice", 1): makeup}), lambda c, keys: True, finder.Settings({}))
+    assert not finder.food_brand(conn, "NYX") and finder.food_brand(conn, "Unknown Brand")
+    conn.execute("INSERT INTO catalog.terms (term, brand, kind) VALUES ('juice', 'NYX', 'split'), ('juice', 'Oatly', 'split')")
+    conn.execute("UPDATE catalog.terms SET done_at = now() WHERE kind <> 'split'")  # only the splits are left
+    conn.commit()
+    client = FakeKroger({})
+    step = finder.crawl_step(conn, client, lambda c, keys: True, finder.Settings({}))
+    assert step["skipped"] == 1 and step["brand"] == "Oatly"            # NYX skipped, Oatly searched
+    assert client.calls == [("juice", "Oatly", 1)]                         # no call for NYX
+    assert conn.execute("SELECT error FROM catalog.terms WHERE brand = 'NYX'").fetchone()[0] == finder.NON_FOOD_BRAND
+    conn.execute("UPDATE catalog.terms SET done_at = now() - interval '60 days'")  # everything is due again...
+    conn.commit()
+    assert finder.next_term(conn, 30)[1] != "NYX"                          # ...except the skipped split
+    assert finder.split(conn, "NYX", "", "brand") == 0                     # and a capped NYX search isn't split
