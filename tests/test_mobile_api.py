@@ -215,6 +215,8 @@ def test_bulk_approve_previews_then_adds_full_drafts(api):
     preview = api.post("/admin/review/bulk", json={"found_via": "kroger_catalog"}).json()  # dry run by default
     assert preview["matching"] == 2 and {s["name"] for s in preview["sample"]} == {"Almond Butter", "Bad Label"}
     assert api.post("/admin/review/bulk", json={"full_only": False}).json()["matching"] == 3
+    with_ingredients = api.post("/admin/review/bulk", json={"full_only": False, "ingredients_only": True}).json()
+    assert with_ingredients["matching"] == 3  # all three drafts have an ingredient list
 
     done = api.post("/admin/review/bulk", json={"found_via": "kroger_catalog", "dry_run": False}).json()
     assert done == {"approved": 1, "skipped": {"impossible nutrition": 1}, "still_matching": 1}
