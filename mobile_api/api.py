@@ -31,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, products, staging, stores, websearch
+from . import config, products, staging, stores, usage, websearch
 from .barcodes import key
 
 @contextlib.asynccontextmanager
@@ -45,6 +45,7 @@ async def lifespan(app):
         try:
             staging.init_schema(conn)
             websearch.init_schema(conn)
+            usage.init_schema(conn)
             kroger_sync.init_schema(conn)
             catalog.init_schema(conn)  # the admin catalog-gap endpoints read it, even before a crawl
         except (psycopg.errors.LockNotAvailable, psycopg.errors.DeadlockDetected) as e:
@@ -88,6 +89,13 @@ def kroger_client():
 def app_auth(request: Request, x_app_key: str | None = Header(None), x_client_id: str | None = Header(None)):
     if config.APP_KEY and x_app_key != config.APP_KEY:
         raise HTTPException(401, "missing or wrong X-App-Key")
+    action = usage.action_for(request.method, request.url.path)
+    if x_client_id and action:  # anonymous usage counts; never let counting break a request
+        try:
+            with _conn() as conn:
+                usage.record(conn, x_client_id[:64], action)
+        except Exception as e:
+            print(f"usage not recorded: {type(e).__name__}: {e}", flush=True)
     return x_client_id or (request.client.host if request.client else "unknown")
 
 
@@ -400,3 +408,9 @@ def catalog_products(group: str | None = None, category: str | None = None, bran
 def catalog_stage(body: StageGroup):
     return _catalog_call(lambda conn, gaps: gaps.stage_group(
         conn, body.group, body.category or None, body.brand or None, body.limit, body.dry_run))
+
+
+@app.get("/admin/usage", dependencies=[Depends(admin_auth)])
+def usage_report(days: int = 30):
+    with _conn() as conn:
+        return usage.summary(conn, max(1, min(days, 365)))

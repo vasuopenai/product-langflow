@@ -291,3 +291,23 @@ def test_card_origin_by_source():
     assert origin({"source": {"name": "usda"}}) == "usda"
     assert origin({"source": {"name": "usda", "origin": "kroger"}}) == "kroger"
     assert origin({"code": "0018627116806"}) == "open_food_facts"  # loaded from an OFF export
+
+
+@pg
+def test_usage_counts_app_actions_per_install(api):
+    me, friend = {"X-Client-Id": "install-aaaaaaaa"}, {"X-Client-Id": "install-bbbbbbbb"}
+    api.get("/api/products/0098765432109", headers=me)
+    api.get("/api/products/0098765432109", headers=me)
+    api.post("/api/scan", json={"barcode": "0098765432109"}, headers=me)
+    api.get("/api/scan/0098765432109", headers=me)                 # polling isn't an action
+    api.get("/api/products/0098765432109", headers=friend)
+    api.get("/api/products/0098765432109")                          # no install ID (e.g. curl): not counted
+    r = api.get("/admin/usage").json()
+    assert r["active"] == {"1d": 2, "7d": 2, "30d": 2} and r["total_installs"] == 2
+    assert r["actions_total"] == {"product_view": 3, "scan": 1}
+    assert r["daily"][-1]["active"] == 2 and r["daily"][-1]["new"] == 2 and r["daily"][-1]["product_view"] == 3
+    from mobile_api.usage import label
+    by_install = {i["install"]: i for i in r["installs"]}
+    assert len(by_install) == 2 and label("install-aaaaaaaa") != label("install-bbbbbbbb")
+    mine = by_install[label("install-aaaaaaaa")]
+    assert (mine["product_view"], mine["scan"], mine["days_active"]) == (2, 1, 1) and r["returning_installs"] == 0
