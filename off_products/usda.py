@@ -573,8 +573,29 @@ RAW_KEYS = ["fdc_id", "gtin_upc", "brand_owner", "brand_name", "description", "i
 SCAN_KEYS = ["origin", "url", "sources"]
 
 
+def with_off_fill(raw):
+    """``raw`` with Open Food Facts values where USDA's are missing (``raw["off"]["fill"]``, see
+    off_products.off_fill): the ingredient statement when USDA's is empty, and per-100 g
+    nutrients USDA lacks. USDA's own values always win. Returns (raw, names of filled fields)."""
+    fill = (raw.get("off") or {}).get("fill") or {}
+    if not fill:
+        return raw, []
+    filled, out = [], dict(raw)
+    if not (raw.get("ingredients") or "").strip() and fill.get("ingredients_text"):
+        out["ingredients"] = fill["ingredients_text"]
+        filled.append("ingredients")
+    usda = raw.get("nutrients") or {}
+    extra = {nid: v for nid, v in (fill.get("nutrients") or {}).items() if usda.get(nid) is None and v is not None}
+    if extra:
+        out["nutrients"] = {**extra, **usda}
+        filled += sorted(USDA_NUTRIENTS[nid][0] for nid in extra if nid in USDA_NUTRIENTS)
+    return out, filled
+
+
 def normalize(raw):
     off = raw.get("off") or {}
+    stored_raw = raw
+    raw, filled_from_off = with_off_fill(raw)
     digits = re.sub(r"\D", "", raw["gtin_upc"])
     code = digits.zfill(12) if len(digits) < 12 else digits
     name = _display(raw.get("description"))
@@ -623,8 +644,11 @@ def normalize(raw):
         },
         # The USDA row itself (plus the OFF extras), so `pg-rederive` can re-apply
         # changed rules from the database without re-reading the source files.
+        # The stored raw row is USDA's own (the OFF fill stays in its "off" block, applied again on
+        # every normalize), so USDA data and filled data stay apart.
         "source": {"usda_fdc_id": raw["fdc_id"], "off": bool(off),
-                   "raw": {k: raw.get(k) for k in RAW_KEYS + [k for k in SCAN_KEYS if k in raw]}},
+                   "filled_from_off": filled_from_off,
+                   "raw": {k: stored_raw.get(k) for k in RAW_KEYS + [k for k in SCAN_KEYS if k in stored_raw]}},
         "image_url": off.get("image_url"),
         "url": raw.get("url") or f"https://fdc.nal.usda.gov/food-details/{raw['fdc_id']}/nutrients",
     }

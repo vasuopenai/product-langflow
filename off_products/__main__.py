@@ -95,6 +95,16 @@ def main():
     pr.add_argument("--embedder", **emb)
     pr.add_argument("--batch-size", type=int, default=1000)
 
+    of = sub.add_parser("off-fill", help="fill empty USDA ingredients/nutrients from Open Food Facts, and add "
+                        "USDA products skipped at load that become complete (see off_products/off_fill.py)")
+    of.add_argument("--parquet", default="data/food.parquet", help="Open Food Facts export")
+    of.add_argument("--usda", default="data/usda", help="USDA branded CSV folder")
+    of.add_argument("--read-dsn", help="database to read USDA records from (default: --dsn)")
+    of.add_argument("--dsn", **dsn)
+    of.add_argument("--embedder", **emb)
+    of.add_argument("--batch-size", type=int, default=500)
+    of.add_argument("--dry-run", action="store_true", help="count only; write nothing")
+
     ps = sub.add_parser("pg-search", help="run a QuerySpec (JSON) against Postgres")
     ps.add_argument("spec", help="QuerySpec JSON, or @file.json")
     ps.add_argument("--dsn", **dsn)
@@ -160,6 +170,28 @@ def main():
         elif args.cmd == "pg-rederive":
             seen, kept = load(args.dsn, args.dsn, embedder, batch_size=args.batch_size, source="stored")
             print(f"re-derived {seen} products, kept {kept}")
+        elif args.cmd == "off-fill":
+            from .off_fill import plan
+            from .pg import init_schema, upsert_batch
+            with psycopg.connect(args.dsn) as conn:
+                app_codes = [c for (c,) in conn.execute("SELECT code FROM products")]
+            with psycopg.connect(args.read_dsn or args.dsn) as read_conn:
+                updated, new, tally = plan(read_conn, args.parquet, args.usda, app_codes)
+            print(json.dumps(tally, indent=2))
+            print(f"would update {len(updated):,} products and add {len(new):,}")
+            if not args.dry_run:
+                with psycopg.connect(args.dsn) as conn:
+                    init_schema(conn, embedder.dim)
+                    # Resumable: products the target already has filled are skipped.
+                    done = {c for (c,) in conn.execute(
+                        "SELECT code FROM products WHERE jsonb_array_length("
+                        "coalesce(record->'source'->'filled_from_off', '[]'::jsonb)) > 0")}
+                    records = [r for r in updated if r["code"] not in done] + new
+                    print(f"{len(updated) - (len(records) - len(new)):,} already filled; writing {len(records):,}")
+                    for i in range(0, len(records), args.batch_size):
+                        upsert_batch(conn, records[i:i + args.batch_size], embedder)
+                        conn.commit()
+                        print(f"written {min(i + args.batch_size, len(records)):,} of {len(records):,}", flush=True)
         elif args.cmd == "pg-search":
             spec = _spec(args.spec)
             vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None

@@ -294,6 +294,7 @@ class BulkApprove(BaseModel):
     status: str = "queued"
     found_via: str | None = None   # "kroger_catalog", "scan" (phone scans) or None (any)
     full_only: bool = True         # only drafts with ingredients and per-100 g nutrition
+    ingredients_only: bool = False  # with full_only false: only drafts with an ingredient list
     category: str | None = None
     brand: str | None = None
     limit: int = staging.BULK_MAX
@@ -305,6 +306,7 @@ class BulkApprove(BaseModel):
 @app.post("/admin/review/bulk", dependencies=[Depends(admin_auth)])
 def review_bulk(body: BulkApprove):
     filters = {"status": body.status, "found_via": body.found_via, "full_only": body.full_only,
+               "ingredients_only": body.ingredients_only,
                "category": body.category or None, "brand": body.brand or None}
     with _conn() as conn:
         if body.dry_run:
