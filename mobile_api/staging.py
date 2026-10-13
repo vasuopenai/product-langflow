@@ -287,8 +287,12 @@ BULK_MAX = 1000  # per request: embeddings and inserts for this many take well u
 FULL_INFO = "draft ? 'ingredients' AND draft->'nutrients_100g' ? 'energy_kcal'"
 
 
-def _bulk_where(status="queued", found_via=None, full_only=True, category=None, brand=None):
+def _bulk_where(status="queued", found_via=None, full_only=True, category=None, brand=None,
+                ingredients_only=False):
+    """ingredients_only: drafts with an ingredient list (nutrition optional); full_only wins if both."""
     where, params = ["status = %s", "draft ? 'name'"], [status]
+    if ingredients_only and not full_only:
+        where.append("coalesce(draft->>'ingredients', '') <> ''")
     if found_via == "scan":
         where.append("found_via IS NULL")
     elif found_via:
