@@ -122,6 +122,17 @@ def test_reload_reuses_embeddings_and_drops_rejected(conn, tmp_path):
     load(SAMPLE, DSN, HashEmbedder(), progress=lambda *_: None)  # restore for later tests
 
 
+def test_healthy_fallback_still_excludes_hydrogenated_oils(conn):
+    # The sample has no carbs, so nothing passes the healthy rule; the fallback still asks
+    # for products known to be free of hydrogenated oils (15 has no ingredient list).
+    spec = {"semantic_query": "protein bar", "healthy": True, "limit": 20}
+    out = ask(conn, "healthy protein bars", HashEmbedder(), FakeOpenAI(spec))
+    codes = [p["code"] for p in out["products"]]
+    assert codes and "0000000000015" not in codes
+    assert any("still free of hydrogenated oils" in n for n in out["notes"])
+    assert out["answer"].endswith('closest matches for "healthy"; check the label to be sure.')
+
+
 def test_ask_relaxes_empty_category(conn):
     spec = {"semantic_query": "avocado oil chips", "categories_any": ["en:protein-bars"],
             "include_ingredients_all": ["en:avocado-oil"], "max_ingredients": 3}

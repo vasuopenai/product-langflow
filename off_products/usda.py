@@ -17,7 +17,7 @@ Files used from the CSV release (unzipped into one directory):
 import re
 import string
 
-from .concepts import GENERIC_OIL_TEXT, classify_text
+from .concepts import GENERIC_OIL_TEXT, check_statement, classify_text
 from .normalize import checked_nutrition, search_text
 
 # --- nutrients ---------------------------------------------------------------
@@ -602,7 +602,7 @@ def normalize(raw):
     ing = ingredients(raw.get("ingredients"), raw.get("description") or "")
     nut = nutrition(raw)
     has_ingredients = bool(ing["items"])
-    groups = classify_text([it["text"] for it in ing["items"]], has_ingredients)
+    groups = check_statement(classify_text([it["text"] for it in ing["items"]], has_ingredients), ing["text"])
     oils = sorted({it["id"] for it in ing["leaves"]
                    if it["id"] and it["id"].endswith("-oil") and it["text"] not in GENERIC_OIL_TEXT})
     kcal, protein = nut["per_100g"]["energy_kcal"], nut["per_100g"]["protein_g"]

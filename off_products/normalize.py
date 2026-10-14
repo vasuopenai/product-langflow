@@ -12,7 +12,7 @@ Accepts both source shapes:
 import json
 import re
 
-from .concepts import classify_all, GENERIC_OILS
+from .concepts import GENERIC_OILS, check_statement, classify_all
 
 # canonical name -> OFF nutrient id. Values are in grams except energy (kcal).
 NUTRIENTS = {
@@ -247,7 +247,7 @@ def normalize(raw):
     nut = nutrition(raw)
     additives = raw.get("additives_tags") or []
     has_ingredients = bool(ing["items"] or ing["text"])
-    groups = classify_all(ing["tags"], additives, ing["leaves"], has_ingredients)
+    groups = check_statement(classify_all(ing["tags"], additives, ing["leaves"], has_ingredients), ing["text"])
     oils = sorted({
         leaf["id"] for leaf in ing["leaves"]
         if leaf["id"] and leaf["id"].endswith("-oil") and leaf["id"] not in GENERIC_OILS

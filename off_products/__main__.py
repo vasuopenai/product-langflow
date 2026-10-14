@@ -95,6 +95,11 @@ def main():
     pr.add_argument("--embedder", **emb)
     pr.add_argument("--batch-size", type=int, default=1000)
 
+    rc = sub.add_parser("pg-recheck", help="re-check stored ingredient statements for hydrogenated oils the "
+                        "parser missed in sub-ingredients (fast; no re-parse or embeddings)")
+    rc.add_argument("--dsn", **dsn)
+    rc.add_argument("--dry-run", action="store_true", help="count only; write nothing")
+
     of = sub.add_parser("off-fill", help="fill empty USDA ingredients/nutrients from Open Food Facts, and add "
                         "USDA products skipped at load that become complete (see off_products/off_fill.py)")
     of.add_argument("--parquet", default="data/food.parquet", help="Open Food Facts export")
@@ -155,6 +160,13 @@ def main():
 
         if not args.dsn:
             ap.error("set DATABASE_URL or pass --dsn")
+        if args.cmd == "pg-recheck":
+            from .pg import recheck_statements
+            with psycopg.connect(args.dsn) as conn:
+                changed = recheck_statements(conn, dry_run=args.dry_run)
+            print(f"{'would mark' if args.dry_run else 'marked'} {len(changed)} products as containing "
+                  f"hydrogenated oils: {' '.join(changed[:20])}{' ...' if len(changed) > 20 else ''}")
+            return
         embedder = make_embedder(args.embedder)
         if args.cmd == "pg-load":
             seen, kept = load(
