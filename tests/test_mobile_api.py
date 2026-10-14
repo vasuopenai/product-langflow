@@ -381,3 +381,11 @@ def test_timing_steps_add_up_and_cost_nothing_without_a_timer():
     with timing.step("search"):
         pass
     assert len(marks["steps"]) == 1  # stopped: later steps aren't recorded
+
+
+def test_ask_results_are_sorted_by_nutriscore_keeping_search_order_within_a_grade():
+    from mobile_api.api import by_nutriscore
+    cards = [{"code": "1", "nutriscore": "C"}, {"code": "2", "nutriscore": None}, {"code": "3", "nutriscore": "A"},
+             {"code": "4", "nutriscore": "E"}, {"code": "5", "nutriscore": "C"}, {"code": "6", "nutriscore": "B"},
+             {"code": "7"}]
+    assert [c["code"] for c in by_nutriscore(cards)] == ["3", "6", "1", "5", "4", "2", "7"]

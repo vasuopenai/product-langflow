@@ -162,6 +162,13 @@ def with_kroger(conn, cards, location_id):
     return [{**c, "kroger": items.get(c["code"])} for c in cards]
 
 
+def by_nutriscore(cards):
+    """Nutri-Score A first, then B to E, ungraded last. The sort is stable, so within a grade
+    the search order stays (products sold at the user's store first, then the closest matches)."""
+    rank = {g: i for i, g in enumerate("ABCDE")}
+    return sorted(cards, key=lambda c: rank.get(c.get("nutriscore") or "", len(rank)))
+
+
 # Matches checked against the store per question (Kroger looks up 50 per call, cached).
 STORE_POOL = 150
 
@@ -276,7 +283,8 @@ def ask(body: Question, client_id: str = Depends(app_auth)):
             cards = [products.card(recs[p["code"]]) for p in result["products"] if p["code"] in recs]
         out = {"question": result["question"], "answer": result["answer"], "notes": result["notes"],
                "filters": {k: v for k, v in result["spec"].items() if v not in ([], None, "")},
-               "products": with_kroger(conn, cards, body.location_id), "location_id": body.location_id}
+               "products": by_nutriscore(with_kroger(conn, cards, body.location_id)),
+               "location_id": body.location_id}
     if len(_asked) >= ASK_CACHE_SIZE:
         _asked.pop(min(_asked, key=lambda k: _asked[k][0]), None)
     _asked[cache_key] = (time.time(), out)
