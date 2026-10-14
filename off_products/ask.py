@@ -217,10 +217,12 @@ def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None
     return resp.choices[0].message.content
 
 
-def ask(conn, question, embedder, client=None, rerank=None, pool=50):
+def ask(conn, question, embedder, client=None, rerank=None, pool=50, write_answer=True):
     """Answer a question. `rerank`, if given, receives up to `pool` matches and returns
     them reordered plus an optional note (e.g. products sold at the user's store first);
-    the usual number of results is kept from that order."""
+    the usual number of results is kept from that order. write_answer=False skips the
+    written answer (a second model call, 2-3 s) for callers that show only the products;
+    the answer is then just the closing line."""
     client = client or _client()
     spec = parse_question(question, client)
     tags = {f: list(getattr(spec, f)) for f in _TAG_FIELDS}
@@ -238,7 +240,7 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50):
         if note:
             notes.append(note)
     text = answer(question, results, notes, client, filters=applied_filters(spec),
-                  ranking={"description": spec.semantic_query, "sort_by": spec.sort_by})
+                  ranking={"description": spec.semantic_query, "sort_by": spec.sort_by}) if write_answer else ""
     # Wishes that ended up unchecked: the parser's own, plus tags dropped as unknown or relaxed.
     dropped = [_plain(t) for f in _TAG_FIELDS for t in tags[f] if t not in getattr(spec, f)]
     dropped += ["healthy"] if healthy and not spec.healthy else []
@@ -248,5 +250,5 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50):
         "spec": spec.__dict__,
         "notes": notes,
         "products": [_facts(r) for r in results],
-        "answer": f"{text.rstrip()}\n\n{line}" if line else text,
+        "answer": "\n\n".join(t for t in (text.rstrip(), line) if t),
     }

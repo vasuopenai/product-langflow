@@ -294,6 +294,28 @@ def test_card_origin_by_source():
 
 
 @pg
+def test_ask_skips_the_written_answer_and_caches_per_question_and_store(api, monkeypatch):
+    import off_products.ask
+    from mobile_api import api as gateway
+    calls = []
+
+    def fake_ask(conn, question, embedder, **kw):
+        calls.append((question, kw))
+        return {"question": question, "answer": "", "notes": [], "spec": {"semantic_query": "chips"},
+                "products": [{"code": "0098765432109"}]}
+
+    monkeypatch.setattr(off_products.ask, "ask", fake_ask)
+    monkeypatch.setattr(gateway, "_asked", {})
+    first = api.post("/api/ask", json={"question": "Healthy  Snacks"}).json()
+    again = api.post("/api/ask", json={"question": "healthy snacks"}).json()  # same question, other spelling
+    assert again == first and len(calls) == 1 and calls[0][1]["write_answer"] is False
+    api.post("/api/ask", json={"question": "healthy snacks", "location_id": "01400943"})  # another store
+    assert len(calls) == 2
+    monkeypatch.setattr(gateway, "ASK_TTL", 0)  # expired
+    api.post("/api/ask", json={"question": "healthy snacks"})
+    assert len(calls) == 3
+
+
 def test_usage_counts_app_actions_per_install(api):
     me, friend = {"X-Client-Id": "install-aaaaaaaa"}, {"X-Client-Id": "install-bbbbbbbb"}
     api.get("/api/products/0098765432109", headers=me)

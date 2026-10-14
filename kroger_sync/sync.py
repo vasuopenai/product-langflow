@@ -21,6 +21,7 @@ import json
 import os
 import traceback
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -45,6 +46,7 @@ SCHEMA = [
 ]
 MODES = ("load", "refresh")
 MAX_AGE_DAYS = int(os.getenv("KROGER_MAX_AGE_DAYS", "7"))
+LIVE_PARALLEL = 4  # Kroger calls at once for the app's live lookups (items_for)
 
 
 def budget():
@@ -100,9 +102,11 @@ def _stale(conn, codes, location_id, max_age_days):
 
 
 def lookup(conn, client, codes, location_id, max_age_days=MAX_AGE_DAYS, call_budget=None,
-           progress=None):
+           progress=None, parallel=1):
     """Look up stale barcodes in the Kroger API and cache the answers (found or not).
-    Returns {"looked_up", "found", "calls", "budget_reached"}."""
+    `parallel` batches are fetched at once (the app's live lookups use a few, so 150
+    barcodes take one call's time; bulk syncs keep 1). Returns {"looked_up", "found",
+    "calls", "budget_reached"}."""
     call_budget = budget() if call_budget is None else call_budget
     stats = Counter()
     todo = {}
@@ -111,45 +115,57 @@ def lookup(conn, client, codes, location_id, max_age_days=MAX_AGE_DAYS, call_bud
         if kid:
             todo[kid] = code
     ids = list(todo)
-    for i in range(0, len(ids), client.BATCH):
+    batches = [ids[i:i + client.BATCH] for i in range(0, len(ids), client.BATCH)]
+    for j in range(0, len(batches), max(parallel, 1)):
         if calls_today(conn) >= call_budget:
             stats["budget_reached"] = 1
             break
-        batch = ids[i:i + client.BATCH]
+        chunk = batches[j:j + max(parallel, 1)]
         before = client.calls
-        products = client.products(batch, location_id)
+        if len(chunk) > 1:
+            client._get_token()  # once, before the threads share it
+            with ThreadPoolExecutor(len(chunk)) as pool:
+                results = list(pool.map(lambda b: client.products(b, location_id), chunk))
+        else:
+            results = [client.products(chunk[0], location_id)]
         _add_calls(conn, client.calls - before)
         stats["calls"] += client.calls - before
-        found = {}
-        for raw in products:
-            p = parse_product(raw)
-            code = next((todo[k] for k in [p["product_id"], (p["upc"] or "").zfill(13)] if k in todo), None)
-            if code:
-                found[code] = (p, raw)
-        now = dt.datetime.now(dt.timezone.utc)
-        rows = []
-        for kid in batch:
-            code = todo[kid]
-            p, raw = found.get(code, ({}, None))
-            rows.append((code, kid, location_id, code in found, p.get("brand"), p.get("description"),
-                         p.get("size"), p.get("price_regular"), p.get("price_promo"), p.get("in_store"),
-                         p.get("stock_level"), p.get("aisle"), p.get("image_url"),
-                         Jsonb(raw) if raw else None, now))
-        conn.cursor().executemany(
-            """INSERT INTO kroger.items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (code, location_id) DO UPDATE SET kroger_id = EXCLUDED.kroger_id,
-                 found = EXCLUDED.found, brand = EXCLUDED.brand,
-                 description = EXCLUDED.description, size = EXCLUDED.size,
-                 price_regular = EXCLUDED.price_regular, price_promo = EXCLUDED.price_promo,
-                 in_store = EXCLUDED.in_store, stock_level = EXCLUDED.stock_level,
-                 aisle = EXCLUDED.aisle, image_url = EXCLUDED.image_url, raw = EXCLUDED.raw,
-                 fetched_at = EXCLUDED.fetched_at""", rows)
-        conn.commit()
-        stats["looked_up"] += len(batch)
-        stats["found"] += len(found)
+        for batch, products in zip(chunk, results):
+            _store_batch(conn, todo, batch, products, location_id, stats)
         if progress:
             progress(f"looked up {stats['looked_up']} of {len(ids)}, {stats['found']} sold at Kroger")
     return dict(stats)
+
+
+def _store_batch(conn, todo, batch, products, location_id, stats):
+    """Cache one batch's answers, including "not sold at Kroger" for ids it didn't return."""
+    found = {}
+    for raw in products:
+        p = parse_product(raw)
+        code = next((todo[k] for k in [p["product_id"], (p["upc"] or "").zfill(13)] if k in todo), None)
+        if code:
+            found[code] = (p, raw)
+    now = dt.datetime.now(dt.timezone.utc)
+    rows = []
+    for kid in batch:
+        code = todo[kid]
+        p, raw = found.get(code, ({}, None))
+        rows.append((code, kid, location_id, code in found, p.get("brand"), p.get("description"),
+                     p.get("size"), p.get("price_regular"), p.get("price_promo"), p.get("in_store"),
+                     p.get("stock_level"), p.get("aisle"), p.get("image_url"),
+                     Jsonb(raw) if raw else None, now))
+    conn.cursor().executemany(
+        """INSERT INTO kroger.items VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (code, location_id) DO UPDATE SET kroger_id = EXCLUDED.kroger_id,
+             found = EXCLUDED.found, brand = EXCLUDED.brand,
+             description = EXCLUDED.description, size = EXCLUDED.size,
+             price_regular = EXCLUDED.price_regular, price_promo = EXCLUDED.price_promo,
+             in_store = EXCLUDED.in_store, stock_level = EXCLUDED.stock_level,
+             aisle = EXCLUDED.aisle, image_url = EXCLUDED.image_url, raw = EXCLUDED.raw,
+             fetched_at = EXCLUDED.fetched_at""", rows)
+    conn.commit()
+    stats["looked_up"] += len(batch)
+    stats["found"] += len(found)
 
 
 def items_for(conn, codes, client=None, location_id=None):
@@ -163,7 +179,7 @@ def items_for(conn, codes, client=None, location_id=None):
         return {"items": {}, "lookup": {}}
     if client is not None and location and codes:
         try:
-            lookup_stats = lookup(conn, client, codes, location)
+            lookup_stats = lookup(conn, client, codes, location, parallel=LIVE_PARALLEL)
         except KrogerError as e:
             lookup_stats = {"error": str(e)}
     items = {}
