@@ -214,6 +214,24 @@ def test_answer_is_told_which_filters_ran():
     assert "unchecked_terms" not in applied_filters(spec)  # a wish, not a filter
 
 
+def test_healthy_rule_keeps_only_protein_rich_low_carb_no_added_sugar_no_trans_fat(tmp_path):
+    path = tmp_path / "healthy.db"
+    build(SAMPLE, str(path))
+    db = sqlite3.connect(path)
+    # The sample has no carbs or trans fat; give some products values. Protein share of
+    # calories: 11 is 37%, 14 is 41%, 12 is 33%, 13 is 12%.
+    for code, carbs, trans in [("0000000000011", 30, 0),  # healthy
+                               ("0000000000014", 60, 0),  # too many carbs (67% of calories)
+                               ("0000000000013", 30, 0),  # too little protein
+                               ("0000000000012", 30, 0)]:  # added sugars, amount unknown
+        db.execute("UPDATE products SET carbs_g_100g = ?, trans_fat_g_serving = ? WHERE code = ?", (carbs, trans, code))
+    assert run(db, healthy=True) == ["0000000000011"]
+    db.execute("UPDATE products SET added_sugars_g_serving = 1 WHERE code = '0000000000012'")  # a little is fine
+    assert sorted(run(db, healthy=True)) == ["0000000000011", "0000000000012"]
+    db.execute("UPDATE products SET trans_fat_g_serving = 0.5 WHERE code = '0000000000011'")
+    assert run(db, healthy=True) == ["0000000000012"]
+
+
 def test_closing_line_names_unchecked_wishes_in_plain_words():
     from off_products.ask import closing_line
     assert closing_line([]) == closing_line(["", " "]) == ""
