@@ -6,6 +6,7 @@ import os
 from .concepts import GROUPS
 from .pg import known_tags, search
 from .retail import retailer_info
+from .timing import step
 from .query import QUERY_SPEC_SCHEMA, QuerySpec
 from .usda import CATEGORY_IDS
 
@@ -130,20 +131,25 @@ def ground_spec(conn, spec):
 
 def retrieve(conn, spec, embedder):
     """Search, relaxing the category filter once if nothing matches."""
-    vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None
-    results, notes = search(conn, spec, vector), []
+    with step("embed"):
+        vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None
+    with step("search"):
+        results, notes = search(conn, spec, vector), []
     if not results and spec.healthy:
         # Relax the rule, but a "healthy" answer never includes hydrogenated oils.
         notes.append("nothing matched the healthy rule; searched without it, still free of hydrogenated oils")
         spec.healthy = False
         if "hydrogenated_oils" not in spec.exclude_groups:
             spec.exclude_groups = [*spec.exclude_groups, "hydrogenated_oils"]
-        results = search(conn, spec, vector)
+        with step("search"):
+            results = search(conn, spec, vector)
     if not results and spec.categories_any:
         notes.append(f"no match in categories {spec.categories_any}; searched all categories")
         spec.categories_any = []
-        results = search(conn, spec, vector)
-    stores = retailer_info(conn, [r["code"] for r in results], ph="%s")
+        with step("search"):
+            results = search(conn, spec, vector)
+    with step("retailers"):
+        stores = retailer_info(conn, [r["code"] for r in results], ph="%s")
     for r in results:
         r["retailers"] = stores.get(r["code"], [])
     return results, notes
@@ -240,10 +246,12 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50, write_answe
     written answer (a second model call, 2-3 s) for callers that show only the products;
     the answer is then just the closing line."""
     client = client or _client()
-    spec = parse_question(question, client)
+    with step("parse"):
+        spec = parse_question(question, client)
     tags = {f: list(getattr(spec, f)) for f in _TAG_FIELDS}
     healthy = spec.healthy
-    notes = ground_spec(conn, spec)
+    with step("ground"):
+        notes = ground_spec(conn, spec)
     limit = spec.limit
     if rerank:
         spec.limit = max(limit, pool)
@@ -251,12 +259,15 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50, write_answe
     notes += more
     if rerank:
         spec.limit = limit
-        results, note = rerank(results)
+        results, note = rerank(results)  # the caller times its own steps (e.g. Kroger lookups)
         results = results[:limit]
         if note:
             notes.append(note)
-    text = answer(question, results, notes, client, filters=applied_filters(spec),
-                  ranking={"description": spec.semantic_query, "sort_by": spec.sort_by}) if write_answer else ""
+    text = ""
+    if write_answer:
+        with step("answer"):
+            text = answer(question, results, notes, client, filters=applied_filters(spec),
+                          ranking={"description": spec.semantic_query, "sort_by": spec.sort_by})
     # Wishes that ended up unchecked: the parser's own, plus tags dropped as unknown or relaxed.
     dropped = [_plain(t) for f in _TAG_FIELDS for t in tags[f] if t not in getattr(spec, f)]
     dropped += ["healthy"] if healthy and not spec.healthy else []

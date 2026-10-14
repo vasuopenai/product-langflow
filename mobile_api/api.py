@@ -14,6 +14,7 @@ identifies an install for rate limits and scan logs):
   POST /api/scan {barcode, lat?, lng?, location_id?}   a scan: product, or research starts
   GET  /api/scan/{barcode}                   poll a scan that is being researched
   GET  /api/products/{barcode}?location_id=  product detail
+Every /api response carries a Server-Timing header (time per step); GET /admin/timings reports them.
 Review endpoints (/admin, header X-Admin-Key when MOBILE_ADMIN_KEY is set) back the
 Streamlit "Review" tab.
 """
@@ -31,7 +32,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, products, staging, stores, usage, websearch
+from off_products import timing
+from off_products.timing import note, step
+
+from . import config, products, staging, stores, timings, usage, websearch
 from .barcodes import key
 
 @contextlib.asynccontextmanager
@@ -46,6 +50,7 @@ async def lifespan(app):
             staging.init_schema(conn)
             websearch.init_schema(conn)
             usage.init_schema(conn)
+            timings.init_schema(conn)
             kroger_sync.init_schema(conn)
             catalog.init_schema(conn)  # the admin catalog-gap endpoints read it, even before a crawl
         except (psycopg.errors.LockNotAvailable, psycopg.errors.DeadlockDetected) as e:
@@ -57,6 +62,27 @@ async def lifespan(app):
 app = FastAPI(title="Food app gateway", lifespan=lifespan)
 # The Expo web build runs on another origin (http://localhost:8081) while testing.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def time_requests(request: Request, call_next):
+    """Time every /api request: Server-Timing header, and a row in mobile.timings (timings.py)."""
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    marks, token = timing.start()
+    t0 = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["Server-Timing"] = timings.header(marks, (time.perf_counter() - t0) * 1000)
+        return response
+    finally:
+        timing.stop(token)
+        total = (time.perf_counter() - t0) * 1000
+        # Saved off the request path, so it never adds to the app's wait.
+        threading.Thread(target=timings.save, daemon=True,
+                         args=(_conn_untimed, request.method, request.url.path, status, total, marks)).start()
 _embedder = None
 _kroger = None
 _calls = collections.defaultdict(collections.deque)
@@ -64,6 +90,11 @@ _calls_lock = threading.Lock()
 
 
 def _conn():
+    with step("db_connect"):
+        return psycopg.connect(config.dsn())
+
+
+def _conn_untimed():
     return psycopg.connect(config.dsn())
 
 
@@ -92,7 +123,7 @@ def app_auth(request: Request, x_app_key: str | None = Header(None), x_client_id
     action = usage.action_for(request.method, request.url.path)
     if x_client_id and action:  # anonymous usage counts; never let counting break a request
         try:
-            with _conn() as conn:
+            with step("usage"), _conn() as conn:
                 usage.record(conn, x_client_id[:64], action)
         except Exception as e:
             print(f"usage not recorded: {type(e).__name__}: {e}", flush=True)
@@ -122,7 +153,8 @@ def kroger_items(conn, codes, location_id):
     if not location_id or not codes:
         return {}
     from kroger_sync import sync as kroger_sync
-    return kroger_sync.items_for(conn, codes, kroger_client(), location_id)["items"]
+    with step("kroger"):
+        return kroger_sync.items_for(conn, codes, kroger_client(), location_id)["items"]
 
 
 def with_kroger(conn, cards, location_id):
@@ -210,7 +242,8 @@ def health():
 @app.get("/api/nearby")
 def nearby(lat: float, lng: float, client_id: str = Depends(app_auth)):
     try:
-        return stores.nearby(lat, lng)
+        with step("store_lookup"):
+            return stores.nearby(lat, lng)
     except Exception as e:
         raise HTTPException(502, f"store lookup failed: {e}")
 
@@ -229,15 +262,18 @@ def ask(body: Question, client_id: str = Depends(app_auth)):
         raise HTTPException(400, "question is empty")
     cache_key = (websearch._norm(body.question), body.location_id)
     hit = _asked.get(cache_key)
+    note("store", bool(body.location_id))
     if hit and time.time() - hit[0] < ASK_TTL:
+        note("cache_hit", True)
         return hit[1]
     spend(client_id)
     with _conn() as conn:
         rerank = (lambda results: store_first(conn, results, body.location_id)) if body.location_id else None
         # The app shows only the product cards, so the written answer (a second model call) is skipped.
         result = run_ask(conn, body.question.strip(), embedder(), rerank=rerank, pool=STORE_POOL, write_answer=False)
-        recs = products.records(conn, [p["code"] for p in result["products"]])
-        cards = [products.card(recs[p["code"]]) for p in result["products"] if p["code"] in recs]
+        with step("cards"):
+            recs = products.records(conn, [p["code"] for p in result["products"]])
+            cards = [products.card(recs[p["code"]]) for p in result["products"] if p["code"] in recs]
         out = {"question": result["question"], "answer": result["answer"], "notes": result["notes"],
                "filters": {k: v for k, v in result["spec"].items() if v not in ([], None, "")},
                "products": with_kroger(conn, cards, body.location_id), "location_id": body.location_id}
@@ -251,10 +287,12 @@ def ask(body: Question, client_id: str = Depends(app_auth)):
 def web(body: WebQuery, client_id: str = Depends(app_auth)):
     with _conn() as conn:
         cached = conn.execute("SELECT 1 FROM mobile.web_cache WHERE query = %s", (websearch._norm(body.query),)).fetchone()
+        note("cache_hit", bool(cached))
         if not cached:
             spend(client_id)
         try:
-            return websearch.search(conn, body.query)
+            with step("web_search"):
+                return websearch.search(conn, body.query)
         except Exception as e:
             raise HTTPException(502, f"web search failed: {e}")
 
@@ -424,6 +462,13 @@ def catalog_products(group: str | None = None, category: str | None = None, bran
 def catalog_stage(body: StageGroup):
     return _catalog_call(lambda conn, gaps: gaps.stage_group(
         conn, body.group, body.category or None, body.brand or None, body.limit, body.dry_run))
+
+
+@app.get("/admin/timings", dependencies=[Depends(admin_auth)])
+def timings_report(hours: int = 24, slowest: int = 20):
+    """Where the time goes: percentiles per route and step, and the slowest requests (ms)."""
+    with _conn() as conn:
+        return timings.summary(conn, max(1, min(hours, 24 * timings.KEEP_DAYS)), max(0, min(slowest, 200)))
 
 
 @app.get("/admin/usage", dependencies=[Depends(admin_auth)])

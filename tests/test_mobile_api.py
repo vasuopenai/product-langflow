@@ -333,3 +333,51 @@ def test_usage_counts_app_actions_per_install(api):
     assert len(by_install) == 2 and label("install-aaaaaaaa") != label("install-bbbbbbbb")
     mine = by_install[label("install-aaaaaaaa")]
     assert (mine["product_view"], mine["scan"], mine["days_active"]) == (2, 1, 1) and r["returning_installs"] == 0
+
+
+def test_requests_are_timed_per_step_with_header_and_report(api, monkeypatch):
+    import off_products.ask
+    from mobile_api import api as gateway
+
+    r = api.get("/api/products/0098765432109", headers={"X-Client-Id": "install-timing"})
+    header = r.headers["Server-Timing"]
+    assert "lookup;dur=" in header and "db_connect;dur=" in header and "usage;dur=" in header
+    assert header.rsplit(", ", 1)[-1].startswith("total;dur=")
+
+    monkeypatch.setattr(gateway, "_asked", {})
+    monkeypatch.setattr(off_products.ask, "ask", lambda conn, q, emb, **kw: {
+        "question": q, "answer": "", "notes": [], "spec": {}, "products": []})
+    api.post("/api/ask", json={"question": "chips"})
+    api.post("/api/ask", json={"question": "chips"})  # answered from the cache
+    deadline = time.time() + 5
+    while time.time() < deadline:  # rows are written off the request path
+        report = api.get("/admin/timings").json()
+        by_route = {x["route"]: x for x in report["routes"]}
+        if by_route.get("/api/ask", {}).get("n") == 2 and "/api/products/{barcode}" in by_route:
+            break
+        time.sleep(0.1)
+    assert by_route["/api/products/{barcode}"]["n"] == 1  # the barcode is not part of the route
+    assert by_route["/api/ask"]["n"] == 2 and by_route["/api/ask"]["cache_hits"] == 1
+    assert {"route": "/api/products/{barcode}", "step": "lookup"} in [
+        {"route": s["route"], "step": s["step"]} for s in report["steps"]]
+    slow = report["slowest"][0]
+    assert slow["total_ms"] >= max(x["total_ms"] for x in report["slowest"]) and "steps" in slow
+    assert api.get("/admin/timings").headers.get("Server-Timing") is None  # admin calls aren't timed
+
+
+def test_timing_steps_add_up_and_cost_nothing_without_a_timer():
+    from off_products import timing
+    with timing.step("search"):  # no timer: nothing happens
+        pass
+    marks, token = timing.start()
+    try:
+        for _ in range(2):
+            with timing.step("search"):
+                time.sleep(0.01)
+        timing.note("cache_hit", False)
+    finally:
+        timing.stop(token)
+    assert marks["steps"]["search"] >= 20 and marks["meta"] == {"cache_hit": False}
+    with timing.step("search"):
+        pass
+    assert len(marks["steps"]) == 1  # stopped: later steps aren't recorded

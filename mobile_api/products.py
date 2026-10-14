@@ -3,6 +3,7 @@
 import json
 
 from off_products.ask import _facts
+from off_products.timing import step
 
 from .barcodes import store_variants
 
@@ -38,7 +39,8 @@ def find(conn, barcode):
     variants = store_variants(barcode)
     if not variants:
         return None
-    row = conn.execute("SELECT record FROM products WHERE code = ANY(%s) LIMIT 1", (variants,)).fetchone()
+    with step("lookup"):
+        row = conn.execute("SELECT record FROM products WHERE code = ANY(%s) LIMIT 1", (variants,)).fetchone()
     return _record(row[0]) if row else None
 
 
