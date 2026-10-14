@@ -35,4 +35,4 @@ ADMIN_KEY = env("MOBILE_ADMIN_KEY")  # if set, review endpoints need X-Admin-Key
 HOURLY_LIMIT = int(env("MOBILE_HOURLY_LIMIT", "60"))
 # Shown on the /privacy and /support pages (App Store requires both).
 SUPPORT_EMAIL = env("SUPPORT_EMAIL")
-PRIVACY_UPDATED = env("PRIVACY_UPDATED", "October 9, 2026")
+PRIVACY_UPDATED = env("PRIVACY_UPDATED", "October 14, 2026")
