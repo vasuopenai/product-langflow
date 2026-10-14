@@ -113,6 +113,16 @@ QUERY_SPEC_SCHEMA = {
                          "sugars_g_serving", "popularity"],
             },
             "limit": {"type": "integer", "default": 10},
+            "unchecked_terms": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The shopper's own words for wishes that no filter above expresses, so they only "
+                    "steer semantic_query: e.g. 'crunchy', 'healthy', or 'high fiber' when there is no "
+                    "fiber threshold. Leave out the product type when categories_any covers it, and "
+                    "anything a filter covers. Empty when every wish is a filter."
+                ),
+            },
         },
         "required": ["semantic_query"],
     },
@@ -139,6 +149,7 @@ class QuerySpec:
     max_nova_group: int | None = None
     sort_by: str = "relevance"
     limit: int = 10
+    unchecked_terms: list = field(default_factory=list)  # not a filter: for the answer's closing line
 
     @classmethod
     def from_dict(cls, d):

@@ -84,7 +84,9 @@ def test_ask_end_to_end_with_relaxation(conn):
     }
     out = ask(conn, "protein bar >= 20 g protein, no seed oils", HashEmbedder(), FakeOpenAI(spec))
     assert [p["code"] for p in out["products"]] == ["0000000000011"]
-    assert out["answer"] == "Chocolate Almond Protein Bar"
+    # The dropped category is named for the shopper in a closing line added by code.
+    assert out["answer"] == ('Chocolate Almond Protein Bar\n\n'
+                             'These are the closest matches for "made up category"; check the label to be sure.')
     assert any("made-up-category" in n for n in out["notes"])
 
 

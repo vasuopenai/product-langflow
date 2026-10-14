@@ -210,6 +210,16 @@ def test_answer_is_told_which_filters_ran():
     spec = QuerySpec(semantic_query="granola", first_ingredient_any=["en:almond"], limit=5)
     answer("gluten-free granola, nuts first", [], [], client, filters=applied_filters(spec))
     assert sent["filters"] == {"first_ingredient_any": ["en:almond"]}
+    spec.unchecked_terms = ["gluten-free"]
+    assert "unchecked_terms" not in applied_filters(spec)  # a wish, not a filter
+
+
+def test_closing_line_names_unchecked_wishes_in_plain_words():
+    from off_products.ask import closing_line
+    assert closing_line([]) == closing_line(["", " "]) == ""
+    assert closing_line(["high fiber"]) == 'These are the closest matches for "high fiber"; check the label to be sure.'
+    assert closing_line(["crunchy", "healthy", "crunchy", "kid-friendly"]) == (
+        'These are the closest matches for "crunchy", "healthy" and "kid-friendly"; check the label to be sure.')
 
 
 def test_answer_sees_a_fixed_ranked_slice_deterministically(records):
