@@ -190,13 +190,27 @@ def store_first(conn, results, location_id):
                          "they are listed first")
 
 
-def staged_view(s):
-    """What the app sees of a product under review (no raw source payloads)."""
+def staged_view(s, conn=None, location_id=None):
+    """What the app sees of a product under review (no raw source payloads), with "product": the
+    card it will become (grade, nutrition, ingredient highlights) marked "preview": true."""
     if not s:
         return None
     return {"barcode": s["barcode"], "status": s["status"], "draft": s["draft"] or {},
             "confidence": s["confidence"], "scan_count": s["scan_count"],
-            "sources": {k: v.get("url") for k, v in (s["sources"] or {}).items() if v}}
+            "sources": {k: v.get("url") for k, v in (s["sources"] or {}).items() if v},
+            "product": preview_card(s, conn, location_id)}
+
+
+def preview_card(s, conn=None, location_id=None):
+    """A card for a researched product that isn't reviewed yet, or None."""
+    if not s or s["status"] in ("approved", "rejected"):
+        return None
+    with step("preview"):
+        rec = staging.preview(s)
+    if not rec:
+        return None
+    card = {**products.card(rec), "preview": True}
+    return with_kroger(conn, [card], location_id)[0] if conn is not None else card
 
 
 # --- app endpoints ---------------------------------------------------------------------
@@ -325,7 +339,7 @@ def scan(body: Scan, client_id: str = Depends(app_auth)):
                 conn.commit()
             staging.research_async(config.dsn(), body.barcode, body.location_id)
             staged = staging.get(conn, body.barcode)
-        return {"status": staged["status"], "staged": staged_view(staged)}
+        return {"status": staged["status"], "staged": staged_view(staged, conn, body.location_id)}
 
 
 @app.get("/api/scan/{barcode}")
@@ -337,16 +351,20 @@ def scan_status(barcode: str, location_id: str | None = None, client_id: str = D
         staged = staging.get(conn, barcode)
         if not staged:
             raise HTTPException(404, "this barcode hasn't been scanned")
-        return {"status": staged["status"], "staged": staged_view(staged)}
+        return {"status": staged["status"], "staged": staged_view(staged, conn, location_id)}
 
 
 @app.get("/api/products/{barcode}")
 def product(barcode: str, location_id: str | None = None, client_id: str = Depends(app_auth)):
     with _conn() as conn:
         rec = products.find(conn, barcode)
-        if not rec:
+        if rec:
+            return with_kroger(conn, [products.card(rec)], location_id)[0]
+        # Scanned and found online but not reviewed yet: the preview, so its page can open.
+        card = preview_card(staging.get(conn, barcode), conn, location_id)
+        if not card:
             raise HTTPException(404, "product not found")
-        return with_kroger(conn, [products.card(rec)], location_id)[0]
+        return card
 
 
 # --- review endpoints (Streamlit "Review" tab) -----------------------------------------------
