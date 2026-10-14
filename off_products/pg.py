@@ -198,6 +198,33 @@ def delete_products(conn, codes):
     conn.commit()
 
 
+def recheck_statements(conn, dry_run=False):
+    """Apply concepts.check_statement to stored records: products whose ingredient statement
+    names hydrogenated oil the parser missed stop being tagged free of it. Cheaper than
+    pg-rederive (no re-parse, no embeddings). Returns the codes changed."""
+    from .concepts import check_statement
+
+    rows = conn.execute("SELECT code, record FROM products WHERE record->'ingredients'->>'text' ~* 'hydrogenat' "
+                        "AND record->'derived'->'groups'->'hydrogenated_oils'->>'status' <> 'contains'").fetchall()
+    changed = []
+    for code, record in rows:
+        groups = record["derived"]["groups"]
+        check_statement(groups, record["ingredients"]["text"])
+        if groups["hydrogenated_oils"]["status"] != "contains":
+            continue  # only "non-hydrogenated"
+        changed.append(code)
+        if dry_run:
+            continue
+        conn.execute("UPDATE products SET record = %s WHERE code = %s", (Jsonb(record), code))
+        conn.execute("DELETE FROM product_tags WHERE code = %s AND kind = 'free_of' AND tag = 'hydrogenated_oils'",
+                     (code,))
+        conn.execute("INSERT INTO product_tags (code, kind, tag) SELECT %s, 'contains_group', 'hydrogenated_oils' "
+                     "WHERE NOT EXISTS (SELECT 1 FROM product_tags WHERE code = %s AND kind = 'contains_group' "
+                     "AND tag = 'hydrogenated_oils')", (code, code))
+    conn.commit()
+    return changed
+
+
 def iter_stored(dsn, progress=print, batch_size=2000):
     """(USDA row, stored record) for every product that kept its row in
     ``record.source.raw``, read with a server-side cursor so the whole table never

@@ -131,8 +131,11 @@ def retrieve(conn, spec, embedder):
     vector = embedder.embed([spec.semantic_query])[0] if spec.semantic_query else None
     results, notes = search(conn, spec, vector), []
     if not results and spec.healthy:
-        notes.append("nothing matched the healthy rule; searched without it")
+        # Relax the rule, but a "healthy" answer never includes hydrogenated oils.
+        notes.append("nothing matched the healthy rule; searched without it, still free of hydrogenated oils")
         spec.healthy = False
+        if "hydrogenated_oils" not in spec.exclude_groups:
+            spec.exclude_groups = [*spec.exclude_groups, "hydrogenated_oils"]
         results = search(conn, spec, vector)
     if not results and spec.categories_any:
         notes.append(f"no match in categories {spec.categories_any}; searched all categories")

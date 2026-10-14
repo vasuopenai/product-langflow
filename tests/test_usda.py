@@ -65,6 +65,24 @@ def test_groups_from_label_text():
     assert classify_text([], False)["seed_oils"]["status"] == "unknown"
 
 
+def test_hydrogenated_oil_in_a_sub_ingredient_is_caught_from_the_statement():
+    from off_products.concepts import check_statement
+    status = lambda text, groups=None: check_statement(
+        groups or {"hydrogenated_oils": {"status": "none", "matches": [], "possible": []}}, text)["hydrogenated_oils"]
+    nested = ("TURKEY, SEASONING (DEHYDRATED KALE, ENCAPSULATED SALT [SALT, HYDROGENATED VEGETABLE OILS: "
+              "SOYBEAN OIL, PALM OIL]), ONION POWDER")
+    assert status(nested)["status"] == "contains"
+    assert status("SAUCE: TOMATO, SALT, PARTIALLY HYDROGENATED SOYBEAN OIL.")["status"] == "contains"
+    assert status("PEANUT BUTTER (PEANUTS, NON-HYDROGENATED PALM OIL)")["status"] == "none"
+    assert status("NOT HYDROGENATED; ALMONDS")["status"] == "none"
+    assert status("ALMONDS, SALT")["status"] == "none"
+    assert status(None)["status"] == "none"
+    # Through the USDA normalizer, whatever the item parse found.
+    row = {"gtin_upc": "000000000001", "fdc_id": 1, "description": "Seasoned Patties", "ingredients": nested}
+    from off_products.usda import normalize as usda_normalize
+    assert usda_normalize(row)["derived"]["groups"]["hydrogenated_oils"]["status"] == "contains"
+
+
 def test_product_key_merges_spelling_variants_but_not_flavors():
     from off_products.pg import _product_key as key
     rec = lambda name, brand="Ghirardelli": {"code": "1", "name": name, "brand": brand}

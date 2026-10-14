@@ -175,6 +175,23 @@ TEXT_RULES = {
 _TEXT_RULES = {g: (re.compile(c, re.I), re.compile(p, re.I) if p else None) for g, (c, p) in TEXT_RULES.items()}
 
 
+# Whole-statement check: the ingredient parser can miss oils nested in a sub-ingredient
+# ("SAUCE: ..., PARTIALLY HYDROGENATED SOYBEAN OIL", "Encapsulated Salt [Salt, Hydrogenated
+# Vegetable Oils]"), which made such products "free of" hydrogenated oils.
+_NOT_HYDROGENATED = re.compile(r"\b(?:non|un|not)[- ]?hydrogenat\w*", re.I)
+
+
+def check_statement(groups, text):
+    """Mark hydrogenated oils as contained when the full ingredient statement names them,
+    whatever the per-ingredient parse found. 'Non-hydrogenated' doesn't count."""
+    if not text or groups.get("hydrogenated_oils", {}).get("status") == "contains":
+        return groups
+    if re.search("hydrogenat", _NOT_HYDROGENATED.sub("", text), re.I):
+        groups["hydrogenated_oils"] = {**groups["hydrogenated_oils"], "status": "contains",
+                                       "matches": groups["hydrogenated_oils"]["matches"] + ["hydrogenated oil"]}
+    return groups
+
+
 def classify_text(names, has_ingredients):
     """Group statuses from ingredient names as written on the label."""
     out = {}
