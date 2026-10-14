@@ -217,6 +217,7 @@ def to_usda_row(barcode, draft, staged_sources=None, origin="scan"):
     unit = (draft.get("serving_unit") or "g").lower()
     nutrients = {sources.USDA_IDS[n]: v for n, v in (draft.get("nutrients_100g") or {}).items()
                  if n in sources.USDA_IDS and v is not None}
+    off_raw = (((staged_sources or {}).get("open_food_facts") or {}).get("raw") or {})
     return {
         "fdc_id": usda.get("fdc_id") or f"scan-{k}",
         "gtin_upc": k.zfill(12),
@@ -234,11 +235,28 @@ def to_usda_row(barcode, draft, staged_sources=None, origin="scan"):
         "modified_date": dt.date.today().isoformat(),
         "nutrients": nutrients,
         "off": {"labels": draft.get("labels") or [], "image_url": draft.get("image_url"),
-                "nova_group": None, "unique_scans_n": 0, "allergens": []},
+                "nova_group": None, "unique_scans_n": 0, "allergens": [],
+                "nutriscore_grade": off_raw.get("nutriscore_grade")},  # OFF's grade is shown first
         "origin": origin,
         "url": urls[0] if urls else None,
         "sources": {name: s.get("url") for name, s in (staged_sources or {}).items() if s},
     }
+
+
+def preview(staged):
+    """The product record a researched (not yet reviewed) draft would become on approval, built the
+    same way but not saved: lets the app show its grade, nutrition and ingredient highlights right
+    after a scan. None without a name, or if the draft can't be read."""
+    from off_products import usda
+
+    draft = (staged or {}).get("draft") or {}
+    if not draft.get("name"):
+        return None
+    try:
+        return usda.normalize(to_usda_row(staged["barcode"], draft, staged.get("sources"), "scan"))
+    except Exception as e:  # a preview must never break a scan
+        print(f"no preview for {staged.get('barcode')}: {type(e).__name__}: {e}", flush=True)
+        return None
 
 
 class ApproveError(ValueError):

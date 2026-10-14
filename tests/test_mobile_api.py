@@ -424,3 +424,36 @@ def test_off_grade_is_shown_when_off_has_one_else_ours(api, tmp_path):
         assert codes[0] in found  # the filter uses the grade shown
     r = api.get(f"/api/products/{codes[0]}").json()
     assert (r["nutriscore"], r["nutriscore_source"]) == (other.upper(), "off")
+
+
+def test_scanned_product_shows_a_preview_card_before_review(api):
+    r = api.post("/api/scan", json={"barcode": NEW}).json()
+    assert r["status"] == "researching" and r["staged"]["product"] is None  # nothing found yet
+    staged = wait_for(api, NEW, "pending")["staged"]
+    card = staged["product"]
+    assert card["preview"] is True and card["name"] == "Cola"  # as the loader writes names
+    assert card["nutriscore"] is None  # this draft has no salt/sodium, so no grade (see the next test)
+    assert card["groups"].get("added_sugars") == "contains"  # the app flags it
+    assert card["per_100g"]["sugars_g"] == 10.6
+    page = api.get(f"/api/products/{card['code']}").json()  # its page opens before review too
+    assert page["preview"] is True and page["name"] == "Cola"
+
+    api.post(f"/admin/review/{NEW}/approve", json={})
+    page = api.get(f"/api/products/{card['code']}").json()
+    assert "preview" not in page and page["name"] == "Cola"
+    assert api.get("/api/products/0000000000000").status_code == 404
+
+
+def test_preview_uses_off_grade_from_research():
+    from mobile_api import staging
+    staged = {"barcode": "5449000000996", "status": "pending",
+              "draft": {"name": "Cola", "ingredients": "CARBONATED WATER, SUGAR", "serving_size_g": 330,
+                        "serving_unit": "ml",
+                        "nutrients_100g": {"energy_kcal": 42, "sugars_g": 10.6, "carbs_g": 10.6, "fat_g": 0,
+                                           "saturated_fat_g": 0, "protein_g": 0, "sodium_mg": 10}},
+              "sources": {"open_food_facts": {"url": "https://world.openfoodfacts.org/product/5449000000996",
+                                              "raw": {"nutriscore_grade": "e"}}}}
+    from mobile_api import products
+    card = products.card(staging.preview(staged))
+    assert (card["nutriscore"], card["nutriscore_source"]) == ("E", "off")
+    assert staging.preview({**staged, "draft": {}}) is None
