@@ -133,6 +133,24 @@ def test_healthy_fallback_still_excludes_hydrogenated_oils(conn):
     assert out["answer"].endswith('closest matches for "healthy"; check the label to be sure.')
 
 
+def test_fill_nutriscore_saves_grades_and_reruns_write_nothing(conn):
+    from nutriscore import compute
+
+    from off_products.pg import fill_nutriscore
+    conn.execute("UPDATE products SET nutriscore_grade = NULL, "
+                 "record = jsonb_set(record, '{scores,nutriscore_grade}', 'null')")
+    assert sum(fill_nutriscore(DSN, dry_run=True, progress=lambda *_: None).values()) == 10
+    assert conn.execute("SELECT count(nutriscore_grade) FROM products").fetchone()[0] == 0  # dry run
+    grades = fill_nutriscore(DSN, progress=lambda *_: None)
+    for code, column, record in conn.execute("SELECT code, nutriscore_grade, record FROM products"):
+        assert column == record["scores"]["nutriscore_grade"] == compute(record)["grade"]
+    assert conn.execute("SELECT count(nutriscore_grade) FROM products").fetchone()[0] == \
+        sum(n for g, n in grades.items() if g != "none")
+    before = conn.execute("SELECT xmin::text, code FROM products ORDER BY code").fetchall()
+    fill_nutriscore(DSN, progress=lambda *_: None)
+    assert conn.execute("SELECT xmin::text, code FROM products ORDER BY code").fetchall() == before  # no rewrites
+
+
 def test_ask_relaxes_empty_category(conn):
     spec = {"semantic_query": "avocado oil chips", "categories_any": ["en:protein-bars"],
             "include_ingredients_all": ["en:avocado-oil"], "max_ingredients": 3}

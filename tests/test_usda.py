@@ -83,6 +83,23 @@ def test_hydrogenated_oil_in_a_sub_ingredient_is_caught_from_the_statement():
     assert usda_normalize(row)["derived"]["groups"]["hydrogenated_oils"]["status"] == "contains"
 
 
+def test_usda_records_get_our_nutriscore():
+    from off_products.usda import normalize as usda_normalize
+    row = {"gtin_upc": "000000000002", "fdc_id": 2, "description": "Sea Salt Potato Chips",
+           "ingredients": "POTATOES, SUNFLOWER OIL, SALT", "branded_food_category": "Chips, Pretzels & Snacks",
+           "serving_size": "28", "serving_size_unit": "g",
+           # USDA ids: energy, fat, saturated fat, carbs, sugars, fiber, protein, sodium (mg)
+           "nutrients": {"1008": 536, "1004": 35.7, "1258": 3.6, "1005": 53.6,
+                         "2000": 0, "1079": 3.6, "1003": 7.1, "1093": 536}}
+    from nutriscore import compute
+    rec = usda_normalize(row)
+    ns = compute(rec)
+    assert ns["grade"] in ("a", "b", "c", "d", "e")
+    assert (rec["scores"]["nutriscore_grade"], rec["scores"]["nutriscore_score"]) == (ns["grade"], ns["score"])
+    del row["nutrients"]["1008"]  # no energy: not computable, stored as None
+    assert usda_normalize(row)["scores"]["nutriscore_grade"] is None
+
+
 def test_product_key_merges_spelling_variants_but_not_flavors():
     from off_products.pg import _product_key as key
     rec = lambda name, brand="Ghirardelli": {"code": "1", "name": name, "brand": brand}

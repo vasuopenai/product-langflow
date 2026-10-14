@@ -108,6 +108,10 @@ QUERY_SPEC_SCHEMA = {
                 "description": "Only products known to be sold at one of these retailers.",
             },
             "max_nova_group": {"type": "integer", "minimum": 1, "maximum": 4},
+            "max_nutriscore_grade": {
+                "enum": ["a", "b", "c", "d", "e"],
+                "description": "Worst Nutri-Score grade allowed: 'Nutri-Score A or B' -> b, 'grade A' -> a.",
+            },
             "sort_by": {
                 "enum": ["relevance", "ingredients_n", "protein_g_serving", "protein_kcal_pct",
                          "sugars_g_serving", "popularity"],
@@ -155,6 +159,7 @@ class QuerySpec:
     countries_any: list = field(default_factory=list)
     retailers_any: list = field(default_factory=list)
     max_nova_group: int | None = None
+    max_nutriscore_grade: str | None = None  # "a".."e"
     sort_by: str = "relevance"
     limit: int = 10
     healthy: bool = False  # the HEALTHY rule below
@@ -200,6 +205,13 @@ HEALTHY = {
     "max_carbs_kcal_share": 0.50,    # at most 50% of calories from carbs (4 kcal/g)
     "max_added_sugars_g_serving": 2,  # or known to have no added sugars at all
 }
+
+
+def _nutriscore_grade(grade):
+    g = str(grade).strip().lower()
+    if g not in ("a", "b", "c", "d", "e"):
+        raise ValueError(f"unknown Nutri-Score grade {grade!r}")
+    return g
 
 
 def _healthy_where(ph):
@@ -275,6 +287,9 @@ def build_where(spec: QuerySpec, ph="?"):
     if spec.max_nova_group is not None:
         where.append(f"p.nova_group <= {ph}")
         params.append(spec.max_nova_group)
+    if spec.max_nutriscore_grade is not None:
+        where.append(f"p.nutriscore_grade <= {ph}")  # 'a' < 'b' < ... ; ungraded rows fail
+        params.append(_nutriscore_grade(spec.max_nutriscore_grade))
     if spec.healthy:
         clauses, values = _healthy_where(ph)
         where += clauses
@@ -334,6 +349,9 @@ def to_pinecone_filter(spec: QuerySpec):
         clauses.append({"serving_g": {"$lte": spec.max_serving_g}})
     if spec.max_nova_group is not None:
         clauses.append({"nova_group": {"$lte": spec.max_nova_group}})
+    if spec.max_nutriscore_grade is not None:
+        top = _nutriscore_grade(spec.max_nutriscore_grade)
+        clauses.append({"nutriscore_grade": {"$in": [g for g in "abcde" if g <= top]}})
     if spec.healthy:
         # Flat metadata can't compare two fields, so the protein and carb shares of HEALTHY
         # are left out here; sugar and trans fat still apply.

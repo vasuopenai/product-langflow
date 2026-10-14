@@ -100,6 +100,11 @@ def main():
     rc.add_argument("--dsn", **dsn)
     rc.add_argument("--dry-run", action="store_true", help="count only; write nothing")
 
+    ns = sub.add_parser("pg-nutriscore", help="compute our Nutri-Score (nutriscore/) for every stored product "
+                        "and save it; reruns only write changed grades")
+    ns.add_argument("--dsn", **dsn)
+    ns.add_argument("--dry-run", action="store_true", help="count grades only; write nothing")
+
     of = sub.add_parser("off-fill", help="fill empty USDA ingredients/nutrients from Open Food Facts, and add "
                         "USDA products skipped at load that become complete (see off_products/off_fill.py)")
     of.add_argument("--parquet", default="data/food.parquet", help="Open Food Facts export")
@@ -160,6 +165,12 @@ def main():
 
         if not args.dsn:
             ap.error("set DATABASE_URL or pass --dsn")
+        if args.cmd == "pg-nutriscore":
+            from .pg import fill_nutriscore
+            grades = fill_nutriscore(args.dsn, dry_run=args.dry_run)
+            print(f"{'would grade' if args.dry_run else 'graded'}: " + ", ".join(
+                f"{g.upper() if g != 'none' else 'not computable'} {n}" for g, n in sorted(grades.items())))
+            return
         if args.cmd == "pg-recheck":
             from .pg import recheck_statements
             with psycopg.connect(args.dsn) as conn:

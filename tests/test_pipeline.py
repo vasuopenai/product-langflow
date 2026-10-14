@@ -232,6 +232,21 @@ def test_healthy_rule_keeps_only_protein_rich_low_carb_no_added_sugar_no_trans_f
     assert run(db, healthy=True) == ["0000000000012"]
 
 
+def test_max_nutriscore_grade_keeps_that_grade_and_better(tmp_path):
+    path = tmp_path / "ns.db"
+    build(SAMPLE, str(path))
+    db = sqlite3.connect(path)
+    db.execute("UPDATE products SET nutriscore_grade = NULL")
+    for code, grade in [("0000000000011", "a"), ("0000000000012", "b"), ("0000000000013", "c")]:
+        db.execute("UPDATE products SET nutriscore_grade = ? WHERE code = ?", (grade, code))
+    assert sorted(run(db, max_nutriscore_grade="b")) == ["0000000000011", "0000000000012"]
+    assert run(db, max_nutriscore_grade="A") == ["0000000000011"]  # ungraded products never match
+    assert to_pinecone_filter(QuerySpec(max_nutriscore_grade="b")) == {
+        "$and": [{"nutriscore_grade": {"$in": ["a", "b"]}}]}
+    with pytest.raises(ValueError):
+        to_sql(QuerySpec(max_nutriscore_grade="f"))
+
+
 def test_closing_line_names_unchecked_wishes_in_plain_words():
     from off_products.ask import closing_line
     assert closing_line([]) == closing_line(["", " "]) == ""

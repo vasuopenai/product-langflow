@@ -234,6 +234,47 @@ def recheck_statements(conn, dry_run=False):
     return changed
 
 
+def fill_nutriscore(dsn, dry_run=False, progress=print, batch_size=2000):
+    """Compute our Nutri-Score for every stored product and save it (record.scores and the
+    nutriscore_grade column). Only rows whose grade or score changes are written, so a
+    rerun is cheap. Returns a Counter of grades ("none" = can't be computed)."""
+    from collections import Counter
+
+    from nutriscore import compute
+
+    grades = Counter()
+    pending = []
+
+    def flush(conn):
+        if pending and not dry_run:
+            codes, gs, ss = map(list, zip(*pending))
+            conn.execute(
+                "UPDATE products p SET nutriscore_grade = v.g, record = jsonb_set(jsonb_set(p.record, "
+                "'{scores,nutriscore_grade}', to_jsonb(v.g)), '{scores,nutriscore_score}', to_jsonb(v.s)) "
+                "FROM unnest(%s::text[], %s::text[], %s::int[]) AS v(code, g, s) WHERE p.code = v.code",
+                (codes, gs, ss))
+            conn.commit()
+        pending.clear()
+
+    with psycopg.connect(dsn) as read, psycopg.connect(dsn) as write:
+        with read.cursor(name="nutriscore") as cur:
+            cur.itersize = batch_size
+            cur.execute("SELECT code, record FROM products")
+            for n, (code, rec) in enumerate(cur, 1):
+                rec = rec if isinstance(rec, dict) else json.loads(rec)
+                ns = compute(rec)
+                grades[ns["grade"] or "none"] += 1
+                scores = rec.get("scores") or {}
+                if (scores.get("nutriscore_grade"), scores.get("nutriscore_score")) != (ns["grade"], ns["score"]):
+                    pending.append((code, ns["grade"], ns["score"]))
+                if len(pending) >= batch_size:
+                    flush(write)
+                if n % 50000 == 0:
+                    progress(f"{n} products scored: {dict(grades)}")
+        flush(write)
+    return grades
+
+
 def iter_stored(dsn, progress=print, batch_size=2000):
     """(USDA row, stored record) for every product that kept its row in
     ``record.source.raw``, read with a server-side cursor so the whole table never

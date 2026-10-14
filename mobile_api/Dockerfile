@@ -5,6 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY off_products ./off_products
+COPY nutriscore ./nutriscore
 COPY kroger_sync ./kroger_sync
 COPY mobile_api ./mobile_api
 COPY catalog_gaps ./catalog_gaps

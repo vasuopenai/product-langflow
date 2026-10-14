@@ -52,6 +52,8 @@ Rules:
 - "healthy", "healthier", "nutritious", "good for you" -> healthy true. That is a fixed rule
   (more protein, fewer carbs, little or no added sugar, no trans fat), so add no nutrient
   filters or groups of your own for it; explicit numbers the user gives still go in nutrients.
+- "Nutri-Score A or B", "nutriscore grade A", "nutri score B or better" -> max_nutriscore_grade
+  ("b", "a", "b"). Only when the user names Nutri-Score; "healthy" alone doesn't set it.
 - unchecked_terms: semantic_query only ranks; it checks nothing. Go through the user's
   describing words one by one (taste, texture, style, flavour, audience, occasion, health
   words such as "clean" or "wholesome", or a nutrient with no threshold such as "high fiber") and list
@@ -171,6 +173,7 @@ def _facts(r):
         "free_of": [g for g, v in r["derived"]["groups"].items() if v["status"] == "none"],
         "labels": r["labels"][:10],
         "retailers": r.get("retailers", []),
+        "nutriscore": ((r.get("scores") or {}).get("nutriscore_grade") or "").upper() or None,
     }
 
 
