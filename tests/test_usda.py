@@ -96,8 +96,14 @@ def test_usda_records_get_our_nutriscore():
     ns = compute(rec)
     assert ns["grade"] in ("a", "b", "c", "d", "e")
     assert (rec["scores"]["nutriscore_grade"], rec["scores"]["nutriscore_score"]) == (ns["grade"], ns["score"])
+    # Cards show the stored grade, or compute it for records saved before grades were stored.
+    from off_products.ask import _facts
+    assert _facts(rec)["nutriscore"] == ns["grade"].upper()
+    rec["scores"]["nutriscore_grade"] = None
+    assert _facts(rec)["nutriscore"] == ns["grade"].upper()
     del row["nutrients"]["1008"]  # no energy: not computable, stored as None
     assert usda_normalize(row)["scores"]["nutriscore_grade"] is None
+    assert _facts(usda_normalize(row))["nutriscore"] is None
 
 
 def test_product_key_merges_spelling_variants_but_not_flavors():

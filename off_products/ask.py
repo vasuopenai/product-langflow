@@ -173,8 +173,21 @@ def _facts(r):
         "free_of": [g for g, v in r["derived"]["groups"].items() if v["status"] == "none"],
         "labels": r["labels"][:10],
         "retailers": r.get("retailers", []),
-        "nutriscore": ((r.get("scores") or {}).get("nutriscore_grade") or "").upper() or None,
+        "nutriscore": (_nutriscore(r) or "").upper() or None,
     }
+
+
+def _nutriscore(r):
+    """The stored grade, or computed now for records saved before grades were stored
+    (pg-nutriscore fills those in; computing one takes about a millisecond)."""
+    grade = (r.get("scores") or {}).get("nutriscore_grade")
+    if grade:
+        return grade
+    from nutriscore import compute
+    try:
+        return compute(r)["grade"]
+    except Exception:
+        return None  # a record shape the calculator doesn't know (e.g. an old OFF load)
 
 
 # Tag filters that grounding (unknown ids) or retrieval (no match in a category) can drop.
