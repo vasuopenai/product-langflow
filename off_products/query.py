@@ -113,6 +113,14 @@ QUERY_SPEC_SCHEMA = {
                          "sugars_g_serving", "popularity"],
             },
             "limit": {"type": "integer", "default": 10},
+            "healthy": {
+                "type": "boolean",
+                "description": (
+                    "The user asks for healthy, healthier, nutritious or good-for-you food. Applies a "
+                    "fixed rule (more protein, fewer carbs, little or no added sugar, no trans fat); "
+                    "don't add your own nutrient filters or groups for the word 'healthy'."
+                ),
+            },
             "unchecked_terms": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -149,6 +157,7 @@ class QuerySpec:
     max_nova_group: int | None = None
     sort_by: str = "relevance"
     limit: int = 10
+    healthy: bool = False  # the HEALTHY rule below
     unchecked_terms: list = field(default_factory=list)  # not a filter: for the answer's closing line
 
     @classmethod
@@ -182,6 +191,30 @@ def _check_groups(groups):
     unknown = set(groups) - set(GROUPS)
     if unknown:
         raise ValueError(f"unknown ingredient groups {sorted(unknown)}")
+
+
+# What "healthy" means, the same in every category. Shares of calories rather than grams per
+# 100 g, so soups and yogurts (mostly water) are judged like chips and bars.
+HEALTHY = {
+    "min_protein_kcal_share": 0.15,  # at least 15% of calories from protein (4 kcal/g)
+    "max_carbs_kcal_share": 0.50,    # at most 50% of calories from carbs (4 kcal/g)
+    "max_added_sugars_g_serving": 2,  # or known to have no added sugars at all
+}
+
+
+def _healthy_where(ph):
+    """SQL for the HEALTHY rule: more protein, fewer carbs, little or no added sugar, no trans
+    fat (0 g on the label and no hydrogenated oils). Unknown values fail, like other filters."""
+    free = ("EXISTS (SELECT 1 FROM product_tags t WHERE t.code = p.code AND t.kind = 'free_of' "
+            "AND t.tag = '{}')")
+    return [
+        "p.energy_kcal_100g > 0",
+        f"p.protein_g_100g * 4 >= {ph} * p.energy_kcal_100g",
+        f"p.carbs_g_100g * 4 <= {ph} * p.energy_kcal_100g",
+        f"({free.format('added_sugars')} OR p.added_sugars_g_serving <= {ph})",
+        "p.trans_fat_g_serving = 0",
+        free.format("hydrogenated_oils"),
+    ], [HEALTHY["min_protein_kcal_share"], HEALTHY["max_carbs_kcal_share"], HEALTHY["max_added_sugars_g_serving"]]
 
 
 def build_where(spec: QuerySpec, ph="?"):
@@ -242,6 +275,10 @@ def build_where(spec: QuerySpec, ph="?"):
     if spec.max_nova_group is not None:
         where.append(f"p.nova_group <= {ph}")
         params.append(spec.max_nova_group)
+    if spec.healthy:
+        clauses, values = _healthy_where(ph)
+        where += clauses
+        params += values
     return where, params
 
 
@@ -297,6 +334,11 @@ def to_pinecone_filter(spec: QuerySpec):
         clauses.append({"serving_g": {"$lte": spec.max_serving_g}})
     if spec.max_nova_group is not None:
         clauses.append({"nova_group": {"$lte": spec.max_nova_group}})
+    if spec.healthy:
+        # Flat metadata can't compare two fields, so the protein and carb shares of HEALTHY
+        # are left out here; sugar and trans fat still apply.
+        clauses += [{"free_of": {"$in": ["added_sugars"]}}, {"free_of": {"$in": ["hydrogenated_oils"]}},
+                    {"trans_fat_g_serving": {"$eq": 0}}]
     return {"$and": clauses} if clauses else {}
 
 
