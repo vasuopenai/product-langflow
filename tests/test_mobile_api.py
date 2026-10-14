@@ -389,3 +389,38 @@ def test_ask_results_are_sorted_by_nutriscore_keeping_search_order_within_a_grad
              {"code": "4", "nutriscore": "E"}, {"code": "5", "nutriscore": "C"}, {"code": "6", "nutriscore": "B"},
              {"code": "7"}]
     assert [c["code"] for c in by_nutriscore(cards)] == ["3", "6", "1", "5", "4", "2", "7"]
+
+
+def test_off_grade_is_shown_when_off_has_one_else_ours(api, tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from mobile_api import api as gateway, products
+    from nutriscore import off_grades
+
+    with gateway._conn() as conn:
+        codes = [c for (c,) in conn.execute("SELECT code FROM products ORDER BY code LIMIT 2")]
+        ours = {c: products.card(products.records(conn, [c])[c]) for c in codes}
+        # OFF's export: the first product with another grade (OFF's codes drop leading zeros),
+        # the second with no grade, plus a product we don't have.
+        other = next(g for g in "abcde" if g.upper() != ours[codes[0]]["nutriscore"])
+        parquet = tmp_path / "off.parquet"
+        pq.write_table(pa.table({"code": [codes[0].lstrip("0"), codes[1], "999"],
+                                 "nutriscore_grade": [other.upper(), "unknown", "a"]}), parquet)
+        grades = off_grades.from_parquet(str(parquet), codes, progress=None)
+        assert grades == {codes[0]: other}
+        off_grades.write_csv(tmp_path / "g.csv", grades)
+        off_grades.save(conn, off_grades.read_csv(tmp_path / "g.csv"))
+
+        first = products.card(products.records(conn, [codes[0]])[codes[0]])
+        assert (first["nutriscore"], first["nutriscore_source"]) == (other.upper(), "off")
+        second = products.card(products.find(conn, codes[1]))
+        assert second["nutriscore"] == ours[codes[1]]["nutriscore"]
+        assert second["nutriscore_source"] == ("computed" if second["nutriscore"] else None)
+
+        from off_products.pg import search
+        from off_products.query import QuerySpec
+        found = [r["code"] for r in search(conn, QuerySpec(max_nutriscore_grade=other, limit=50))]
+        assert codes[0] in found  # the filter uses the grade shown
+    r = api.get(f"/api/products/{codes[0]}").json()
+    assert (r["nutriscore"], r["nutriscore_source"]) == (other.upper(), "off")

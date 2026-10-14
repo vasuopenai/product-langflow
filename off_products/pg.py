@@ -12,6 +12,7 @@ import os
 import re
 
 import psycopg
+from nutriscore.off_grades import SCHEMA as NUTRISCORE_OFF_SCHEMA
 from psycopg.types.json import Jsonb
 
 from .normalize import ingredient_amounts, to_flat
@@ -114,6 +115,7 @@ def init_schema(conn, dim=1536):
     conn.execute("CREATE TABLE IF NOT EXISTS product_tags (code TEXT, kind TEXT, tag TEXT)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_kind_tag ON product_tags(kind, tag, code)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_code ON product_tags(code)")
+    conn.execute(NUTRISCORE_OFF_SCHEMA)  # OFF's published grades, shown before ours
     # kind and tag are strongly related (a 'cat:' tag is always a category); without these
     # statistics Postgres multiplies their odds and guesses ~5,000 rows for "cat:snacks"
     # (really ~115,000), then plans a per-row loop that took 20 s to 2 min instead of <1 s.
@@ -236,8 +238,9 @@ def recheck_statements(conn, dry_run=False):
 
 def fill_nutriscore(dsn, dry_run=False, progress=print, batch_size=2000):
     """Compute our Nutri-Score for every stored product and save it (record.scores and the
-    nutriscore_grade column). Only rows whose grade or score changes are written, so a
-    rerun is cheap. Returns a Counter of grades ("none" = can't be computed)."""
+    nutriscore_grade column; the shown grade stays OFF's where the record has one, see
+    usda.set_nutriscore). Only rows whose values change are written, so a rerun is cheap.
+    Returns a Counter of our grades ("none" = can't be computed)."""
     from collections import Counter
 
     from nutriscore import compute
@@ -247,12 +250,13 @@ def fill_nutriscore(dsn, dry_run=False, progress=print, batch_size=2000):
 
     def flush(conn):
         if pending and not dry_run:
-            codes, gs, ss = map(list, zip(*pending))
+            codes, shown, gs, ss = map(list, zip(*pending))
             conn.execute(
-                "UPDATE products p SET nutriscore_grade = v.g, record = jsonb_set(jsonb_set(p.record, "
-                "'{scores,nutriscore_grade}', to_jsonb(v.g)), '{scores,nutriscore_score}', to_jsonb(v.s)) "
-                "FROM unnest(%s::text[], %s::text[], %s::int[]) AS v(code, g, s) WHERE p.code = v.code",
-                (codes, gs, ss))
+                "UPDATE products p SET nutriscore_grade = v.shown, record = jsonb_set(p.record, '{scores}', "
+                "coalesce(p.record->'scores', '{}') || jsonb_build_object('nutriscore_grade', v.shown, "
+                "'nutriscore_computed', v.g, 'nutriscore_score', v.s)) "
+                "FROM unnest(%s::text[], %s::text[], %s::text[], %s::int[]) AS v(code, shown, g, s) "
+                "WHERE p.code = v.code", (codes, shown, gs, ss))
             conn.commit()
         pending.clear()
 
@@ -265,8 +269,11 @@ def fill_nutriscore(dsn, dry_run=False, progress=print, batch_size=2000):
                 ns = compute(rec)
                 grades[ns["grade"] or "none"] += 1
                 scores = rec.get("scores") or {}
-                if (scores.get("nutriscore_grade"), scores.get("nutriscore_score")) != (ns["grade"], ns["score"]):
-                    pending.append((code, ns["grade"], ns["score"]))
+                shown = scores.get("nutriscore_off") or ns["grade"]
+                # Records saved before nutriscore_computed existed keep ours in nutriscore_grade.
+                ours = scores["nutriscore_computed"] if "nutriscore_computed" in scores else scores.get("nutriscore_grade")
+                if (ours, scores.get("nutriscore_score"), scores.get("nutriscore_grade")) != (ns["grade"], ns["score"], shown):
+                    pending.append((code, shown, ns["grade"], ns["score"]))
                 if len(pending) >= batch_size:
                     flush(write)
                 if n % 50000 == 0:

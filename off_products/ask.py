@@ -179,21 +179,25 @@ def _facts(r):
         "free_of": [g for g, v in r["derived"]["groups"].items() if v["status"] == "none"],
         "labels": r["labels"][:10],
         "retailers": r.get("retailers", []),
-        "nutriscore": (_nutriscore(r) or "").upper() or None,
+        **_nutriscore_card(r),
     }
 
 
-def _nutriscore(r):
-    """The stored grade, or computed now for records saved before grades were stored
-    (pg-nutriscore fills those in; computing one takes about a millisecond)."""
-    grade = (r.get("scores") or {}).get("nutriscore_grade")
-    if grade:
-        return grade
-    from nutriscore import compute
-    try:
-        return compute(r)["grade"]
-    except Exception:
-        return None  # a record shape the calculator doesn't know (e.g. an old OFF load)
+def _nutriscore_card(r):
+    """{"nutriscore": "A".."E" or None, "nutriscore_source": "off" | "computed" | None}: the grade
+    Open Food Facts publishes when it has one (scores.nutriscore_off, from the record or the
+    nutriscore_off table), else ours, stored or computed now (about a millisecond)."""
+    scores = r.get("scores") or {}
+    if scores.get("nutriscore_off"):
+        return {"nutriscore": scores["nutriscore_off"].upper(), "nutriscore_source": "off"}
+    grade = scores.get("nutriscore_computed") or scores.get("nutriscore_grade")
+    if not grade:
+        from nutriscore import compute
+        try:
+            grade = compute(r)["grade"]
+        except Exception:
+            grade = None  # a record shape the calculator doesn't know (e.g. an old OFF load)
+    return {"nutriscore": grade.upper() if grade else None, "nutriscore_source": "computed" if grade else None}
 
 
 # Tag filters that grounding (unknown ids) or retrieval (no match in a category) can drop.

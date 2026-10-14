@@ -21,6 +21,22 @@ compute(record)   # record = a products.record from Postgres (off_products.usda.
 
 ---
 
+## 0. Which grade the app shows
+
+The grade Open Food Facts publishes for the barcode when OFF has one (card field
+`nutriscore_source: "off"`), otherwise ours (`"computed"`). OFF's grades live in the small
+`nutriscore_off (code, grade)` table, refreshed from a new OFF export without rewriting product
+rows (`nutriscore/off_grades.py`):
+
+```
+python -m nutriscore off-grades --parquet data/food.parquet --csv data/off_grades.csv   # local
+deploy/lightsail/lightsail.sh push-off-grades                                             # server
+```
+
+Records also keep both: `scores.nutriscore_computed` (ours), `scores.nutriscore_off` (from a
+USDA load with OFF extras) and `scores.nutriscore_grade` (the one shown). The
+`max_nutriscore_grade` filter and the app's A-to-E sort use the shown grade.
+
 ## 1. The idea in one paragraph
 
 Nutri-Score turns a product's nutrition panel (per 100 g, or per 100 ml for drinks)

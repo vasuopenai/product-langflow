@@ -68,6 +68,7 @@ def open_db(path):
         + ", ".join(f'"{c}"' for c in cols)
         + ", search_text TEXT, record TEXT);"
         "CREATE TABLE IF NOT EXISTS product_tags (code TEXT, kind TEXT, tag TEXT);"
+        "CREATE TABLE IF NOT EXISTS nutriscore_off (code TEXT PRIMARY KEY, grade TEXT NOT NULL);"
         "CREATE INDEX IF NOT EXISTS tags_kind_tag ON product_tags(kind, tag, code);"
         "CREATE INDEX IF NOT EXISTS tags_code ON product_tags(code);"
         "CREATE TABLE IF NOT EXISTS product_ingredients (code TEXT, ingredient TEXT, rank INTEGER, "

@@ -466,7 +466,7 @@ def off_extras(parquet_path, keys):
 
     out = {}
     pf = pq.ParquetFile(parquet_path)
-    cols = ["code", "labels_tags", "images", "nova_group", "unique_scans_n", "allergens_tags"]
+    cols = ["code", "labels_tags", "images", "nova_group", "unique_scans_n", "allergens_tags", "nutriscore_grade"]
     for i in range(pf.num_row_groups):
         for row in pf.read_row_group(i, columns=cols).to_pylist():
             key = gtin_key(row["code"])
@@ -477,6 +477,7 @@ def off_extras(parquet_path, keys):
                     "nova_group": row["nova_group"],
                     "unique_scans_n": row["unique_scans_n"] or 0,
                     "allergens": row["allergens_tags"] or [],
+                    "nutriscore_grade": row["nutriscore_grade"],
                 }
     return out
 
@@ -655,15 +656,19 @@ def normalize(raw):
     if raw.get("origin"):
         record["source"]["origin"] = raw["origin"]
     record["search_text"] = search_text(record)
-    set_nutriscore(record)
+    set_nutriscore(record, off.get("nutriscore_grade"))
     return record
 
 
-def set_nutriscore(record):
-    """Our Nutri-Score 2023 grade and score (nutriscore/, docs/NUTRISCORE.md) into
-    record["scores"]; None when it can't be computed (e.g. missing nutrients)."""
+def set_nutriscore(record, off_grade=None):
+    """Nutri-Score into record["scores"]: nutriscore_computed / nutriscore_score are ours (2023
+    algorithm, nutriscore/, docs/NUTRISCORE.md; None when it can't be computed), nutriscore_off
+    is the grade Open Food Facts publishes, and nutriscore_grade, the one shown, is OFF's when
+    there is one, else ours."""
     from nutriscore import compute
 
     ns = compute(record)
-    record["scores"]["nutriscore_grade"], record["scores"]["nutriscore_score"] = ns["grade"], ns["score"]
+    off_grade = (off_grade or "").lower() if (off_grade or "").lower() in ("a", "b", "c", "d", "e") else None
+    record["scores"].update(nutriscore_computed=ns["grade"], nutriscore_score=ns["score"], nutriscore_off=off_grade,
+                            nutriscore_grade=off_grade or ns["grade"])
     return record
