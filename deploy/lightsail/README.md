@@ -138,3 +138,20 @@ IP to it, so the app's URL doesn't change. About 30-45 minutes, a few minutes of
    `docker-compose.prod.yml`), then `lightsail.sh status`.
 6. When the app works for a day, **stop** and then **delete** the old instance (a stopped
    instance still costs its disk). Keep the snapshot a week, then delete it.
+
+## Rewriting many product rows (e.g. `pg-nutriscore` on all products)
+
+Every rewritten row is also inserted into the HNSW vector index, which is very slow for
+hundreds of thousands of rows. Drop the index first and rebuild it afterwards (search is slow
+until the rebuild finishes, ~30 minutes on 16 GB):
+
+```bash
+lightsail.sh ssh
+cd /opt/food && C="docker compose -f docker-compose.yml -f deploy/lightsail/docker-compose.prod.yml"
+$C exec -T db psql -U postgres -d food -c "DROP INDEX IF EXISTS products_embedding"
+$C exec -T mobile python -u -m off_products pg-nutriscore
+$C exec -T db psql -U postgres -d food -c "SET maintenance_work_mem = '6GB'" \
+  -c "SET max_parallel_maintenance_workers = 3" \
+  -c "CREATE INDEX products_embedding ON products USING hnsw (embedding vector_cosine_ops)" \
+  -c "VACUUM ANALYZE products"
+```

@@ -9,8 +9,9 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     # Docker's default 64 MB /dev/shm is too small for parallel index builds (the HNSW vector
-    # index fails with "could not resize shared memory segment").
-    shm_size: 1gb
+    # index fails with "could not resize shared memory segment"). 7 GB lets a rebuild keep the
+    # whole graph in memory (SET maintenance_work_mem = '6GB'); tmpfs uses RAM only while building.
+    shm_size: 7gb
     # Sized for a 16 GB server: the vector index (~3.3 GB) and most product rows stay in memory.
     command: ["postgres", "-c", "shared_buffers=4GB", "-c", "effective_cache_size=12GB",
               "-c", "maintenance_work_mem=1GB", "-c", "work_mem=32MB"]
