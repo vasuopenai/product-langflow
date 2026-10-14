@@ -346,13 +346,25 @@ def search(conn, spec: QuerySpec, query_vector=None):
         params_order = [_vec(query_vector)]
     else:
         params_order = []
-    order.append("p.unique_scans_n DESC NULLS LAST")
-    order.append("p.code")  # final tie-break, so equal rows come back in a stable order
-    sql = (
-        f"SELECT p.code, p.record, {select_sim} FROM products p WHERE "
-        + " AND ".join(where)
-        + " ORDER BY " + ", ".join(order) + " LIMIT %s"
-    )
+    if query_vector is not None and order == ["p.embedding <=> %s::vector"]:
+        # Ordered by similarity alone, so Postgres can walk the vector index: with tie-breaks
+        # in the same ORDER BY it scores every row the filters allow (115,000 for snacks,
+        # 20-120 s from disk on the server). Ties are broken in the outer query instead.
+        sql = (
+            f"SELECT code, record, similarity FROM (SELECT p.code, p.record, p.unique_scans_n, {select_sim}, "
+            "p.embedding <=> %s::vector AS distance FROM products p WHERE " + " AND ".join(where)
+            + " ORDER BY p.embedding <=> %s::vector LIMIT %s) s "
+            "ORDER BY distance, unique_scans_n DESC NULLS LAST, code"
+        )
+        sim_params = sim_params + [_vec(query_vector)]
+    else:
+        order.append("p.unique_scans_n DESC NULLS LAST")
+        order.append("p.code")  # final tie-break, so equal rows come back in a stable order
+        sql = (
+            f"SELECT p.code, p.record, {select_sim} FROM products p WHERE "
+            + " AND ".join(where)
+            + " ORDER BY " + ", ".join(order) + " LIMIT %s"
+        )
     with conn.transaction():
         try:
             with conn.transaction():
