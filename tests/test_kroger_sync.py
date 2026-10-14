@@ -104,6 +104,19 @@ def test_lookup_caches_found_and_not_found(conn):
 
 
 @pg
+def test_parallel_lookup_fetches_batches_at_once_and_caches_them_all(conn):
+    from kroger_sync import sync
+
+    fake = FakeKroger()
+    client = KrogerClient("id", "secret", fetch=fake)
+    client.BATCH = 1  # three barcodes -> three batches, fetched together
+    stats = sync.lookup(conn, client, [CHIPS, BAR, CHOCOLATE], "01400943", parallel=4)
+    assert stats["calls"] == 3 and stats["looked_up"] == 3 and len(fake.urls) == 3
+    items = sync.items_for(conn, [CHIPS, BAR, CHOCOLATE], None, "01400943")["items"]
+    assert {c for c, v in items.items() if v["sold"]} == {CHIPS, CHOCOLATE} and BAR in items
+
+
+@pg
 def test_falls_back_to_single_lookups_when_lists_are_rejected(conn):
     from kroger_sync import sync
 

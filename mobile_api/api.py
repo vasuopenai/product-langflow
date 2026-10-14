@@ -9,7 +9,7 @@ App endpoints (/api, header X-App-Key when MOBILE_APP_KEY is set; X-Client-Id
 identifies an install for rate limits and scan logs):
   GET  /api/health
   GET  /api/nearby?lat=&lng=                 store the user is at / stores near them
-  POST /api/ask {question, location_id?}     answer + product cards + Kroger price at the store
+  POST /api/ask {question, location_id?}     product cards + Kroger price at the store (cached an hour)
   POST /api/web {query}                      products from the web (cached a day)
   POST /api/scan {barcode, lat?, lng?, location_id?}   a scan: product, or research starts
   GET  /api/scan/{barcode}                   poll a scan that is being researched
@@ -215,20 +215,36 @@ def nearby(lat: float, lng: float, client_id: str = Depends(app_auth)):
         raise HTTPException(502, f"store lookup failed: {e}")
 
 
+# Answers per (question, store) are kept in memory for an hour: the suggestion chips and
+# repeated questions come back instantly, and don't count against the hourly limit.
+ASK_TTL = 3600
+ASK_CACHE_SIZE = 500
+_asked = {}
+
+
 @app.post("/api/ask")
 def ask(body: Question, client_id: str = Depends(app_auth)):
     from off_products.ask import ask as run_ask
     if not body.question.strip():
         raise HTTPException(400, "question is empty")
+    cache_key = (websearch._norm(body.question), body.location_id)
+    hit = _asked.get(cache_key)
+    if hit and time.time() - hit[0] < ASK_TTL:
+        return hit[1]
     spend(client_id)
     with _conn() as conn:
         rerank = (lambda results: store_first(conn, results, body.location_id)) if body.location_id else None
-        result = run_ask(conn, body.question.strip(), embedder(), rerank=rerank, pool=STORE_POOL)
+        # The app shows only the product cards, so the written answer (a second model call) is skipped.
+        result = run_ask(conn, body.question.strip(), embedder(), rerank=rerank, pool=STORE_POOL, write_answer=False)
         recs = products.records(conn, [p["code"] for p in result["products"]])
         cards = [products.card(recs[p["code"]]) for p in result["products"] if p["code"] in recs]
-        return {"question": result["question"], "answer": result["answer"], "notes": result["notes"],
-                "filters": {k: v for k, v in result["spec"].items() if v not in ([], None, "")},
-                "products": with_kroger(conn, cards, body.location_id), "location_id": body.location_id}
+        out = {"question": result["question"], "answer": result["answer"], "notes": result["notes"],
+               "filters": {k: v for k, v in result["spec"].items() if v not in ([], None, "")},
+               "products": with_kroger(conn, cards, body.location_id), "location_id": body.location_id}
+    if len(_asked) >= ASK_CACHE_SIZE:
+        _asked.pop(min(_asked, key=lambda k: _asked[k][0]), None)
+    _asked[cache_key] = (time.time(), out)
+    return out
 
 
 @app.post("/api/web")
