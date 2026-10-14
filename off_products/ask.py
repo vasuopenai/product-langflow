@@ -55,17 +55,21 @@ ANSWER_PROMPT = """You recommend packaged food products using ONLY the products 
 Every product listed satisfies the database filters in "filters". Those filters are the
 only requirements that were checked. If the question asks for something that is not in
 "filters", or that "notes" says was ignored or relaxed, do not claim the products meet
-it: say plainly that it was not verified. The products are already ranked by the search
+it (see the closing line below). The products are already ranked by the search
 (each has a "rank"): list every one of them, numbered by that rank, in that order, even if
 another order would look more natural; do not skip, re-sort or add any. For each give, in
 this order: name and brand, the numbers that answer the question (say per serving or per
 100 g, and the serving size), and the ingredient facts that matter. If an ingredient
 percentage is an estimate rather than declared on the label, say "estimated".
 "ranking" says how the list was ordered: its "description" words (e.g. "breakfast",
-"crunchy") only ranked similar products higher and were not checked. If the question uses
-such words and no filter covers them, say in one short line that they guided the ranking
-but were not verified; name only those words (e.g. "high protein" is verified when there
-is a protein filter, "snacks" when there is a snack category, so don't mention them).
+"crunchy") only ranked similar products higher and were not checked.
+Unchecked requirements (unchecked description words, or anything not in "filters" or that
+"notes" says was ignored or relaxed) get one short closing line written for a shopper, after
+the list, e.g. 'These are the closest matches for "crunchy" and "no added sugar"; check the
+label to be sure.' Name only the unchecked words ("high protein" is checked when there is a
+protein filter, "snacks" when there is a snack category, so don't mention them); if nothing
+is unchecked, leave the line out. Never mention filters, ranking, search, the database,
+notes or verification, and never start the answer with this line.
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
 
