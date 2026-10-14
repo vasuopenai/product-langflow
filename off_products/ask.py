@@ -49,13 +49,22 @@ Rules:
 - Ingredient quantities ("70% cocoa", "at least 5 g almonds") -> ingredient_amounts.
   Set declared_only only if the user says the amount must be stated on the label.
 - Do not invent constraints the user did not ask for.
+- unchecked_terms: semantic_query only ranks; it checks nothing. Go through the user's
+  describing words one by one (taste, texture, style, flavour, audience, occasion, health
+  words such as "healthy", or a nutrient with no threshold such as "high fiber") and list
+  every one that no filter expresses, in the user's words. Leave out only the product type
+  (e.g. "tortilla chips", "cereal") when categories_any covers it, and words a filter covers.
+  Examples: "high fiber cereal with no added sugar" -> ["high fiber"]; "crunchy breakfast
+  snacks, 10 g protein" -> ["crunchy", "breakfast"]; "protein bars, 20 g protein, no seed
+  oils" -> []; "potato chips cooked in avocado oil" -> []; "mild salsa for a party" ->
+  ["mild", "for a party"].
 """
 
 ANSWER_PROMPT = """You recommend packaged food products using ONLY the products provided.
 Every product listed satisfies the database filters in "filters". Those filters are the
 only requirements that were checked. If the question asks for something that is not in
 "filters", or that "notes" says was ignored or relaxed, do not claim the products meet
-it (see the closing line below). The products are already ranked by the search
+it. The products are already ranked by the search
 (each has a "rank"): list every one of them, numbered by that rank, in that order, even if
 another order would look more natural; do not skip, re-sort or add any. For each give, in
 this order: name and brand, the numbers that answer the question (say per serving or per
@@ -63,13 +72,9 @@ this order: name and brand, the numbers that answer the question (say per servin
 percentage is an estimate rather than declared on the label, say "estimated".
 "ranking" says how the list was ordered: its "description" words (e.g. "breakfast",
 "crunchy") only ranked similar products higher and were not checked.
-Unchecked requirements (unchecked description words, or anything not in "filters" or that
-"notes" says was ignored or relaxed) get one short closing line written for a shopper, after
-the list, e.g. 'These are the closest matches for "crunchy" and "no added sugar"; check the
-label to be sure.' Name only the unchecked words ("high protein" is checked when there is a
-protein filter, "snacks" when there is a snack category, so don't mention them); if nothing
-is unchecked, leave the line out. Never mention filters, ranking, search, the database,
-notes or verification, and never start the answer with this line.
+End with the last product: no summary, and no caveat or claim about what was or wasn't checked
+(a closing line for that is added separately). Never mention filters, ranking, search, the
+database, notes, requirements or verification.
 If there are no products, say so and suggest how to loosen the request.
 Keep it concise."""
 
@@ -158,10 +163,30 @@ def _facts(r):
     }
 
 
+# Tag filters that grounding (unknown ids) or retrieval (no match in a category) can drop.
+_TAG_FIELDS = ("categories_any", "include_ingredients_all", "first_ingredient_any", "labels_all", "retailers_any")
+
+
 def applied_filters(spec):
     """The hard filters of a spec that actually ran, for the answer to cite."""
-    skip = {"semantic_query", "sort_by", "limit"}
+    skip = {"semantic_query", "sort_by", "limit", "unchecked_terms"}
     return {k: v for k, v in spec.__dict__.items() if k not in skip and v not in ([], None)}
+
+
+def _plain(tag):
+    """'cat:snack-bars' / 'en:avocado-oil' -> 'snack bars' / 'avocado oil'."""
+    return str(tag).split(":", 1)[-1].replace("-", " ").replace("_", " ")
+
+
+def closing_line(terms):
+    """One plain line naming the shopper's wishes no filter checked; '' when there are none.
+    Written in code, not by the answer model, which can't reliably tell what was checked."""
+    terms = list(dict.fromkeys(t.strip() for t in terms if t and t.strip()))
+    if not terms:
+        return ""
+    quoted = [f'"{t}"' for t in terms]
+    names = quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+    return f"These are the closest matches for {names}; check the label to be sure."
 
 
 def answer(question, results, notes, client=None, model=CHAT_MODEL, filters=None, ranking=None):
@@ -186,6 +211,7 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50):
     the usual number of results is kept from that order."""
     client = client or _client()
     spec = parse_question(question, client)
+    tags = {f: list(getattr(spec, f)) for f in _TAG_FIELDS}
     notes = ground_spec(conn, spec)
     limit = spec.limit
     if rerank:
@@ -198,11 +224,15 @@ def ask(conn, question, embedder, client=None, rerank=None, pool=50):
         results = results[:limit]
         if note:
             notes.append(note)
+    text = answer(question, results, notes, client, filters=applied_filters(spec),
+                  ranking={"description": spec.semantic_query, "sort_by": spec.sort_by})
+    # Wishes that ended up unchecked: the parser's own, plus tags dropped as unknown or relaxed.
+    dropped = [_plain(t) for f in _TAG_FIELDS for t in tags[f] if t not in getattr(spec, f)]
+    line = closing_line(spec.unchecked_terms + dropped) if results else ""
     return {
         "question": question,
         "spec": spec.__dict__,
         "notes": notes,
         "products": [_facts(r) for r in results],
-        "answer": answer(question, results, notes, client, filters=applied_filters(spec),
-                         ranking={"description": spec.semantic_query, "sort_by": spec.sort_by}),
+        "answer": f"{text.rstrip()}\n\n{line}" if line else text,
     }
