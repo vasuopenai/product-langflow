@@ -655,4 +655,15 @@ def normalize(raw):
     if raw.get("origin"):
         record["source"]["origin"] = raw["origin"]
     record["search_text"] = search_text(record)
+    set_nutriscore(record)
+    return record
+
+
+def set_nutriscore(record):
+    """Our Nutri-Score 2023 grade and score (nutriscore/, docs/NUTRISCORE.md) into
+    record["scores"]; None when it can't be computed (e.g. missing nutrients)."""
+    from nutriscore import compute
+
+    ns = compute(record)
+    record["scores"]["nutriscore_grade"], record["scores"]["nutriscore_score"] = ns["grade"], ns["score"]
     return record
