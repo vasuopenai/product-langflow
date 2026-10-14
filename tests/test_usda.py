@@ -101,6 +101,11 @@ def test_usda_records_get_our_nutriscore():
     assert _facts(rec)["nutriscore"] == ns["grade"].upper()
     rec["scores"]["nutriscore_grade"] = None
     assert _facts(rec)["nutriscore"] == ns["grade"].upper()
+    # With OFF's grade from the export, it is the one shown; ours is kept next to it.
+    other = next(g for g in "abcde" if g != ns["grade"])
+    shown = usda_normalize({**row, "off": {"nutriscore_grade": other.upper()}})["scores"]
+    assert (shown["nutriscore_grade"], shown["nutriscore_off"], shown["nutriscore_computed"]) == (other, other, ns["grade"])
+    assert usda_normalize({**row, "off": {"nutriscore_grade": "unknown"}})["scores"]["nutriscore_off"] is None
     del row["nutrients"]["1008"]  # no energy: not computable, stored as None
     assert usda_normalize(row)["scores"]["nutriscore_grade"] is None
     assert _facts(usda_normalize(row))["nutriscore"] is None

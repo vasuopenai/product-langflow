@@ -12,6 +12,15 @@ def _record(rec):
     return rec if isinstance(rec, dict) else json.loads(rec)
 
 
+def _with_off_grade(rec, grade):
+    """Open Food Facts' published Nutri-Score (nutriscore_off table) into the record, where cards
+    look for it; a grade already in the record (from a USDA load with OFF extras) is kept."""
+    if grade:
+        rec.setdefault("scores", {})
+        rec["scores"]["nutriscore_off"] = rec["scores"].get("nutriscore_off") or grade
+    return rec
+
+
 def card(rec):
     """What the app shows for a product: the answer facts plus image, category and
     allergens, and where the data came from."""
@@ -40,13 +49,15 @@ def find(conn, barcode):
     if not variants:
         return None
     with step("lookup"):
-        row = conn.execute("SELECT record FROM products WHERE code = ANY(%s) LIMIT 1", (variants,)).fetchone()
-    return _record(row[0]) if row else None
+        row = conn.execute("SELECT p.record, o.grade FROM products p LEFT JOIN nutriscore_off o ON o.code = p.code "
+                           "WHERE p.code = ANY(%s) LIMIT 1", (variants,)).fetchone()
+    return _with_off_grade(_record(row[0]), row[1]) if row else None
 
 
 def records(conn, codes):
     """code -> record, for a list of product codes."""
     if not codes:
         return {}
-    return {c: _record(r) for c, r in conn.execute(
-        "SELECT code, record FROM products WHERE code = ANY(%s)", (list(codes),))}
+    return {c: _with_off_grade(_record(r), g) for c, r, g in conn.execute(
+        "SELECT p.code, p.record, o.grade FROM products p LEFT JOIN nutriscore_off o ON o.code = p.code "
+        "WHERE p.code = ANY(%s)", (list(codes),))}

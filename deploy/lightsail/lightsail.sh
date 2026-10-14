@@ -7,6 +7,7 @@
 #   lightsail.sh deploy        ship the committed code, build, start, check https://API_DOMAIN
 #   lightsail.sh push-db       copy your local `food` database to the server (--replace to overwrite)
 #   lightsail.sh push-refs     copy the catalog gap finder's USDA/OFF barcode lists (docs/CATALOG_GAPS.md)
+#   lightsail.sh push-off-grades [data/off_grades.csv]   load Open Food Facts' Nutri-Score grades
 # Day to day:
 #   lightsail.sh deploy | status | logs [service] | backup | keys | tunnel | ssh
 set -euo pipefail
@@ -157,6 +158,16 @@ case "$cmd" in
     health
     ;;
 
+  push-off-grades)
+    # Open Food Facts' published Nutri-Score per product, shown before ours (nutriscore/off_grades.py).
+    # Built locally from the OFF export: python -m nutriscore off-grades --parquet data/food.parquet --csv data/off_grades.csv
+    csv=${2:-$ROOT/data/off_grades.csv}
+    [ -f "$csv" ] || { echo "No $csv: build it with python -m nutriscore off-grades --parquet ... --csv $csv" >&2; exit 1; }
+    scp "${SSH_OPTS[@]}" "$csv" "ubuntu@$LIGHTSAIL_HOST:/tmp/off_grades.csv"
+    in_app "$COMPOSE cp /tmp/off_grades.csv mobile:/tmp/off_grades.csv \
+      && $COMPOSE exec -T mobile python -m nutriscore off-grades --load /tmp/off_grades.csv \
+      && rm -f /tmp/off_grades.csv"
+    ;;
   push-refs)
     # The catalog gap finder's barcode reference lists (full USDA and Open Food Facts), built
     # locally with `python -m catalog_gaps build-refs`; a small upload instead of 9 GB of sources.

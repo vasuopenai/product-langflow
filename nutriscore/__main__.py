@@ -2,6 +2,7 @@
 
   python -m nutriscore validate [--sample N] [--json report.json]   # ours vs Open Food Facts
   python -m nutriscore show 0016000275287 [...]                       # one product, with points
+  python -m nutriscore off-grades --parquet data/food.parquet [--csv F]  # OFF's grades (off_grades.py)
 """
 
 import json
@@ -37,10 +38,13 @@ def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    if len(sys.argv) < 2 or sys.argv[1] not in ("validate", "show"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("validate", "show", "off-grades"):
         print(__doc__)
         sys.exit(2)
-    if sys.argv[1] == "validate":
+    if sys.argv[1] == "off-grades":
+        from .off_grades import main as off_grades_main
+        off_grades_main(sys.argv[2:])
+    elif sys.argv[1] == "validate":
         from .validate import main as validate_main
         validate_main(sys.argv[2:])
     else:

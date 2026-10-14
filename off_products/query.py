@@ -288,7 +288,9 @@ def build_where(spec: QuerySpec, ph="?"):
         where.append(f"p.nova_group <= {ph}")
         params.append(spec.max_nova_group)
     if spec.max_nutriscore_grade is not None:
-        where.append(f"p.nutriscore_grade <= {ph}")  # 'a' < 'b' < ... ; ungraded rows fail
+        # The grade shown: Open Food Facts' when it has one, else ours. 'a' < 'b' < ...; ungraded fail.
+        where.append("COALESCE((SELECT o.grade FROM nutriscore_off o WHERE o.code = p.code), p.nutriscore_grade) "
+                     f"<= {ph}")
         params.append(_nutriscore_grade(spec.max_nutriscore_grade))
     if spec.healthy:
         clauses, values = _healthy_where(ph)

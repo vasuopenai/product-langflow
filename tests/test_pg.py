@@ -139,6 +139,7 @@ def test_fill_nutriscore_saves_grades_and_reruns_write_nothing(conn):
     from off_products.pg import fill_nutriscore
     conn.execute("UPDATE products SET nutriscore_grade = NULL, "
                  "record = jsonb_set(record, '{scores,nutriscore_grade}', 'null')")
+    conn.commit()  # fill_nutriscore reads and writes on its own connections
     assert sum(fill_nutriscore(DSN, dry_run=True, progress=lambda *_: None).values()) == 10
     assert conn.execute("SELECT count(nutriscore_grade) FROM products").fetchone()[0] == 0  # dry run
     grades = fill_nutriscore(DSN, progress=lambda *_: None)
@@ -149,6 +150,13 @@ def test_fill_nutriscore_saves_grades_and_reruns_write_nothing(conn):
     before = conn.execute("SELECT xmin::text, code FROM products ORDER BY code").fetchall()
     fill_nutriscore(DSN, progress=lambda *_: None)
     assert conn.execute("SELECT xmin::text, code FROM products ORDER BY code").fetchall() == before  # no rewrites
+    # A record carrying OFF's grade keeps it as the shown grade; ours goes next to it.
+    code = before[0][1]
+    conn.execute("UPDATE products SET record = jsonb_set(record, '{scores,nutriscore_off}', '\"a\"') WHERE code = %s", (code,))
+    conn.commit()
+    fill_nutriscore(DSN, progress=lambda *_: None)
+    column, scores = conn.execute("SELECT nutriscore_grade, record->'scores' FROM products WHERE code = %s", (code,)).fetchone()
+    assert column == scores["nutriscore_grade"] == "a" and "nutriscore_computed" in scores
 
 
 def test_ask_relaxes_empty_category(conn):
