@@ -331,3 +331,16 @@ def test_rejects_unknown_fields():
         to_sql(QuerySpec(exclude_groups=["not_a_group"]))
     with pytest.raises(ValueError):
         to_sql(QuerySpec(nutrients=[{"nutrient": "protein_g; DROP", "basis": "serving", "op": ">", "value": 1}]))
+
+
+def test_no_grade_note_says_why_in_plain_words():
+    from off_products.ask import _no_grade_note
+    assert _no_grade_note({"status": "missing_data", "missing": ["salt_g", "saturated_fat_g", "fiber_g"],
+                           "reasons": ["missing salt_g, saturated_fat_g"]}) == "Missing salt, saturated fat"
+    assert _no_grade_note({"status": "missing_data", "missing": ["energy_kcal"],
+                           "reasons": ["nutrition values failed plausibility checks", "missing energy_kcal"]}) \
+        == "Nutrition data looks wrong"
+    assert _no_grade_note({"status": "not_applicable", "reasons": ["herbs and spices"]}) \
+        == "Not rated for this kind of food (herbs and spices)"
+    assert _no_grade_note({"status": "needs_prepared_values", "reasons": ["x"]}).startswith("Rated as prepared")
+    assert _no_grade_note({"status": "missing_data", "missing": ["fiber_g"], "reasons": []}) == "Not enough nutrition data"

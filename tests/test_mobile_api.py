@@ -433,6 +433,7 @@ def test_scanned_product_shows_a_preview_card_before_review(api):
     card = staged["product"]
     assert card["preview"] is True and card["name"] == "Cola"  # as the loader writes names
     assert card["nutriscore"] is None  # this draft has no salt/sodium, so no grade (see the next test)
+    assert card["nutriscore_note"] == "Missing salt"  # the app shows NA with this
     assert card["groups"].get("added_sugars") == "contains"  # the app flags it
     assert card["per_100g"]["sugars_g"] == 10.6
     page = api.get(f"/api/products/{card['code']}").json()  # its page opens before review too

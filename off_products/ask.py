@@ -191,13 +191,33 @@ def _nutriscore_card(r):
     if scores.get("nutriscore_off"):
         return {"nutriscore": scores["nutriscore_off"].upper(), "nutriscore_source": "off"}
     grade = scores.get("nutriscore_computed") or scores.get("nutriscore_grade")
-    if not grade:
-        from nutriscore import compute
-        try:
-            grade = compute(r)["grade"]
-        except Exception:
-            grade = None  # a record shape the calculator doesn't know (e.g. an old OFF load)
-    return {"nutriscore": grade.upper() if grade else None, "nutriscore_source": "computed" if grade else None}
+    if grade:
+        return {"nutriscore": grade.upper(), "nutriscore_source": "computed"}
+    from nutriscore import compute
+    try:
+        ns = compute(r)
+    except Exception:  # a record shape the calculator doesn't know (e.g. an old OFF load)
+        return {"nutriscore": None, "nutriscore_source": None, "nutriscore_note": "Not enough nutrition data"}
+    if ns["grade"]:
+        return {"nutriscore": ns["grade"].upper(), "nutriscore_source": "computed"}
+    return {"nutriscore": None, "nutriscore_source": None, "nutriscore_note": _no_grade_note(ns)}
+
+
+_NUTRIENT_WORDS = {"energy_kcal": "calories", "fat_g": "fat", "saturated_fat_g": "saturated fat",
+                   "sugars_g": "sugars", "salt_g": "salt", "protein_g": "protein"}
+
+
+def _no_grade_note(ns):
+    """Why there is no Nutri-Score, in a few words for the app (shown next to "NA")."""
+    status, reasons = ns.get("status"), ns.get("reasons") or []
+    if status == "not_applicable":
+        return f"Not rated for this kind of food ({reasons[0]})" if reasons else "Not rated for this kind of food"
+    if status == "needs_prepared_values":
+        return "Rated as prepared; this label lists values as sold"
+    if any("plausibility" in r for r in reasons):
+        return "Nutrition data looks wrong"
+    missing = [_NUTRIENT_WORDS[m] for m in ns.get("missing") or [] if m in _NUTRIENT_WORDS]
+    return f"Missing {', '.join(missing)}" if missing else "Not enough nutrition data"
 
 
 # Tag filters that grounding (unknown ids) or retrieval (no match in a category) can drop.
