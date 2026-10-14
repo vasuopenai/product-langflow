@@ -11,8 +11,8 @@ services:
     # Docker's default 64 MB /dev/shm is too small for parallel index builds (the HNSW vector
     # index fails with "could not resize shared memory segment").
     shm_size: 1gb
-    # Sized for an 8 GB server: keeps most of the vector index in memory.
-    command: ["postgres", "-c", "shared_buffers=2GB", "-c", "effective_cache_size=5GB",
+    # Sized for a 16 GB server: the vector index (~3.3 GB) and most product rows stay in memory.
+    command: ["postgres", "-c", "shared_buffers=4GB", "-c", "effective_cache_size=12GB",
               "-c", "maintenance_work_mem=1GB", "-c", "work_mem=32MB"]
   api:
     restart: unless-stopped

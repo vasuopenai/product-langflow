@@ -9,7 +9,7 @@ iPhone app ──HTTPS──▶ Caddy (80/443) ──▶ mobile gateway ──�
 api, kroger, wholefoods: on the server only (reach them over an SSH tunnel)
 ```
 
-Cost: the 8 GB Linux plan is $44/month (2 vCPU, 160 GB SSD, 5 TB transfer); snapshots about
+Cost: the 16 GB Linux plan is $84/month (4 vCPU, 320 GB SSD, 6 TB transfer); snapshots about
 $0.05/GB-month; a .com domain $15/year. OpenAI usage is billed separately.
 
 Everything below runs from **Git Bash** in the `product-langflow` folder on your PC.
@@ -18,7 +18,8 @@ Everything below runs from **Git Bash** in the `product-langflow` folder on your
 
 1. https://lightsail.aws.amazon.com → **Create instance**.
    - Region: **Virginia (us-east-1)**. Platform: **Linux/Unix**. Blueprint: **OS Only → Ubuntu 24.04 LTS**.
-   - Plan: **General purpose, $44 (8 GB)**, dual-stack (IPv4).
+   - Plan: **General purpose, $84 (16 GB)**, dual-stack (IPv4). 8 GB ($44) works but searches
+     wait on disk: the vector index and product rows (~13 GB) don't fit in memory.
    - Name: `food-genie`. **Create instance**.
 2. **Networking → Create static IP**, attach it to `food-genie`. Note the IP.
 3. On the instance's **Networking** tab, IPv4 firewall: keep SSH (22) and HTTP (80), **add HTTPS (443)**.
@@ -118,3 +119,22 @@ the admin key in the Review tab.
 Move the database to Amazon RDS for PostgreSQL (pgvector is included) when traffic grows: restore
 a backup there, set `DATABASE_URL` for the services, and drop the `db` service. Or resize the
 Lightsail instance from a snapshot to the 16 GB plan.
+
+## Move to a bigger plan (e.g. 8 GB -> 16 GB)
+
+Lightsail can't resize in place; you make a new instance from a snapshot and move the static
+IP to it, so the app's URL doesn't change. About 30-45 minutes, a few minutes of downtime.
+
+1. **Snapshots** tab of `food-genie` → **Create snapshot** (e.g. `food-genie-before-16gb`).
+   Wait until it says *Available* (10-20 minutes for this disk).
+2. On the snapshot: **⋮ → Create new instance**. Same region and zone, plan
+   **General purpose, $84 (16 GB)**. Name it `food-genie-16gb`. Create, wait for *Running*.
+3. New instance → **Networking** → IPv4 firewall: add **HTTPS (443)** next to SSH and HTTP
+   (firewall rules are not copied from snapshots).
+4. **Networking → Static IPs** → `food-genie`'s static IP → **Detach**, then **Attach** to
+   `food-genie-16gb`. The IP (and `API_DOMAIN`) stay the same, so `target.env` and the app
+   need no change. The same SSH key works.
+5. From the PC: `deploy/lightsail/lightsail.sh deploy` (applies the 16 GB Postgres settings in
+   `docker-compose.prod.yml`), then `lightsail.sh status`.
+6. When the app works for a day, **stop** and then **delete** the old instance (a stopped
+   instance still costs its disk). Keep the snapshot a week, then delete it.
