@@ -114,6 +114,15 @@ def init_schema(conn, dim=1536):
     conn.execute("CREATE TABLE IF NOT EXISTS product_tags (code TEXT, kind TEXT, tag TEXT)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_kind_tag ON product_tags(kind, tag, code)")
     conn.execute("CREATE INDEX IF NOT EXISTS tags_code ON product_tags(code)")
+    # kind and tag are strongly related (a 'cat:' tag is always a category); without these
+    # statistics Postgres multiplies their odds and guesses ~5,000 rows for "cat:snacks"
+    # (really ~115,000), then plans a per-row loop that took 20 s to 2 min instead of <1 s.
+    # The ANALYZE after a load (autovacuum) fills them in.
+    conn.execute("CREATE STATISTICS IF NOT EXISTS product_tags_kind_tag (dependencies, mcv) "
+                 "ON kind, tag FROM product_tags")
+    if conn.execute("SELECT attstattarget IS DISTINCT FROM 1000 FROM pg_attribute "
+                    "WHERE attrelid = 'product_tags'::regclass AND attname = 'tag'").fetchone()[0]:
+        conn.execute("ALTER TABLE product_tags ALTER COLUMN tag SET STATISTICS 1000")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS product_ingredients (code TEXT, ingredient TEXT, rank INTEGER, "
         "declared SMALLINT, percent DOUBLE PRECISION, percent_min DOUBLE PRECISION, "
