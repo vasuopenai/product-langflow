@@ -100,8 +100,9 @@ def main():
     rc.add_argument("--dsn", **dsn)
     rc.add_argument("--dry-run", action="store_true", help="count only; write nothing")
 
-    rt = sub.add_parser("pg-retag", help="add category tags the current rules give stored products "
-                        "(e.g. cat:baby-food); only adds product_tags rows")
+    rt = sub.add_parser("pg-retag", help="add the named category tags where the current rules give them "
+                        "to stored products (e.g. --tag cat:baby-food); only adds product_tags rows")
+    rt.add_argument("--tag", action="append", required=True, help="category id to add; repeatable")
     rt.add_argument("--dsn", **dsn)
     rt.add_argument("--dry-run", action="store_true", help="count only; write nothing")
 
@@ -173,7 +174,7 @@ def main():
         if args.cmd == "pg-retag":
             from .pg import retag_categories
             with psycopg.connect(args.dsn) as conn:
-                added = retag_categories(conn, dry_run=args.dry_run)
+                added = retag_categories(conn, set(args.tag), dry_run=args.dry_run)
             print(f"{'would add' if args.dry_run else 'added'}: " + (", ".join(
                 f"{t} {n}" for t, n in added.most_common()) or "nothing"))
             return
