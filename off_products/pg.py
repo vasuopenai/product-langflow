@@ -209,10 +209,12 @@ def delete_products(conn, codes):
     conn.commit()
 
 
-def retag_categories(conn, dry_run=False):
-    """Add the category tags today's rules give stored products (usda.categories, e.g. the
-    cat:baby-food rule added later) where they're missing. Only product_tags gets rows, so no
-    product row is rewritten. Returns {tag: products tagged}."""
+def retag_categories(conn, tags, dry_run=False):
+    """Add the given category tags (e.g. {"cat:baby-food"} after its rule was added) where today's
+    rules (usda.categories) give them to a stored product and it lacks them. Only those tags:
+    the rules are written for USDA categories, and on records loaded from Open Food Facts
+    ("en:ginger-beer") other tags come out wrong ("cat:alcohol"). Only product_tags gets rows,
+    so no product row is rewritten. Returns {tag: products tagged}."""
     from collections import Counter
 
     from .usda import categories
@@ -224,7 +226,7 @@ def retag_categories(conn, dry_run=False):
     for code, cat, name, brand in conn.execute(
             "SELECT code, record->>'main_category', record->>'name', record->>'brand' FROM products"):
         for tag in categories(cat, name, brand):
-            if tag not in have.get(code, ()):
+            if tag in tags and tag not in have.get(code, ()):
                 rows.append((code, "category", tag))
                 added[tag] += 1
     if rows and not dry_run:

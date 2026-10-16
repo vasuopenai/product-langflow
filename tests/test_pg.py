@@ -187,8 +187,9 @@ def test_retag_adds_missing_category_tags_only(conn):
     code = conn.execute("SELECT code FROM products ORDER BY code LIMIT 1").fetchone()[0]
     conn.execute("UPDATE products SET record = jsonb_set(record, '{name}', '\"Banana Puffs Stage 2\"') WHERE code = %s",
                  (code,))
-    assert retag_categories(conn, dry_run=True)["cat:baby-food"] >= 1
-    assert retag_categories(conn)["cat:baby-food"] >= 1
+    added = retag_categories(conn, {"cat:baby-food"}, dry_run=True)
+    assert added["cat:baby-food"] >= 1 and set(added) == {"cat:baby-food"}  # only the tags asked for
+    assert retag_categories(conn, {"cat:baby-food"})["cat:baby-food"] >= 1
     assert conn.execute("SELECT 1 FROM product_tags WHERE code = %s AND kind = 'category' AND tag = 'cat:baby-food'",
                         (code,)).fetchone()
-    assert not retag_categories(conn)  # a rerun adds nothing
+    assert not retag_categories(conn, {"cat:baby-food"})  # a rerun adds nothing
