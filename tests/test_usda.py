@@ -254,3 +254,21 @@ def test_rederive_reapplies_rules_from_stored_rows_without_reembedding():
         tags = {t for (t,) in c.execute(
             "SELECT tag FROM product_tags WHERE code = '012345678905' AND kind = 'category'")}
     assert tags == {"cat:chips-pretzels", "cat:snacks"}
+
+
+def test_baby_food_gets_its_own_category_but_baby_carrots_dont():
+    from off_products.usda import categories, is_baby_food
+    for name, brand in [("Apples & Carrots Baby Food", None), ("Organic Pear Puree Stage 1", None),
+                        ("Banana Puffs", "Gerber"), ("Strawberry Yogurt Melts", "Happy Baby"),
+                        ("Oatmeal Cereal 6+ Months", None), ("Veggie Melts 9m+", None), ("Toddler Snack Bars", None),
+                        ("Mango Pouch", "Once Upon A Farm"), ("Infant Formula With Iron", "Parent's Choice")]:
+        assert is_baby_food(name, brand), name
+    for name, brand in [("Baby Carrots", None), ("Organic Baby Spinach", None), ("Stuffed Baby Bellas", None),
+                        ("Baby Back Ribs", None), ("Baby Ruth Candy Bar", None), ("12 Months Aged Cheddar", None),
+                        ("Protein Bar", "Sprout Living"), ("Sweet Potato Puree", "Sprouts")]:
+        assert not is_baby_food(name, brand), name
+    # On top of the usual category; USDA's own baby category makes it the main one.
+    assert categories("Chips, Pretzels & Snacks", "Banana Puffs", "Gerber") == \
+        ["cat:chips-pretzels", "cat:snacks", "cat:baby-food"]
+    assert categories("Baby/Infant  Foods/Beverages", "Apple Juice") == ["cat:baby-food"]
+    assert categories("Pre-Packaged Fruit & Vegetables", "Baby Carrots") == ["cat:fruit-vegetables"]

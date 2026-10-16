@@ -209,6 +209,32 @@ def delete_products(conn, codes):
     conn.commit()
 
 
+def retag_categories(conn, dry_run=False):
+    """Add the category tags today's rules give stored products (usda.categories, e.g. the
+    cat:baby-food rule added later) where they're missing. Only product_tags gets rows, so no
+    product row is rewritten. Returns {tag: products tagged}."""
+    from collections import Counter
+
+    from .usda import categories
+
+    have = {}
+    for code, tag in conn.execute("SELECT code, tag FROM product_tags WHERE kind = 'category'"):
+        have.setdefault(code, set()).add(tag)
+    added, rows = Counter(), []
+    for code, cat, name, brand in conn.execute(
+            "SELECT code, record->>'main_category', record->>'name', record->>'brand' FROM products"):
+        for tag in categories(cat, name, brand):
+            if tag not in have.get(code, ()):
+                rows.append((code, "category", tag))
+                added[tag] += 1
+    if rows and not dry_run:
+        with conn.cursor().copy("COPY product_tags (code, kind, tag) FROM STDIN") as copy:
+            for row in rows:
+                copy.write_row(row)
+        conn.commit()
+    return added
+
+
 def recheck_statements(conn, dry_run=False):
     """Apply concepts.check_statement to stored records: products whose ingredient statement
     names hydrogenated oil the parser missed stop being tagged free of it. Cheaper than

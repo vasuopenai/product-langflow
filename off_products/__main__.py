@@ -100,6 +100,11 @@ def main():
     rc.add_argument("--dsn", **dsn)
     rc.add_argument("--dry-run", action="store_true", help="count only; write nothing")
 
+    rt = sub.add_parser("pg-retag", help="add category tags the current rules give stored products "
+                        "(e.g. cat:baby-food); only adds product_tags rows")
+    rt.add_argument("--dsn", **dsn)
+    rt.add_argument("--dry-run", action="store_true", help="count only; write nothing")
+
     ns = sub.add_parser("pg-nutriscore", help="compute our Nutri-Score (nutriscore/) for every stored product "
                         "and save it; reruns only write changed grades")
     ns.add_argument("--dsn", **dsn)
@@ -165,6 +170,13 @@ def main():
 
         if not args.dsn:
             ap.error("set DATABASE_URL or pass --dsn")
+        if args.cmd == "pg-retag":
+            from .pg import retag_categories
+            with psycopg.connect(args.dsn) as conn:
+                added = retag_categories(conn, dry_run=args.dry_run)
+            print(f"{'would add' if args.dry_run else 'added'}: " + (", ".join(
+                f"{t} {n}" for t, n in added.most_common()) or "nothing"))
+            return
         if args.cmd == "pg-nutriscore":
             from .pg import fill_nutriscore
             grades = fill_nutriscore(args.dsn, dry_run=args.dry_run)

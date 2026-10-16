@@ -50,6 +50,11 @@ Rules:
 - Ingredient quantities ("70% cocoa", "at least 5 g almonds") -> ingredient_amounts.
   Set declared_only only if the user says the amount must be stated on the label.
 - Do not invent constraints the user did not ask for.
+- Food for babies, infants or toddlers ("baby food", "food for my 9 month old", "toddler
+  snacks", "baby puffs", "baby cereal") -> categories_any ["cat:baby-food"] only (categories_any
+  means any of them, so adding cat:cereal would let in all cereal); the kind of food goes in
+  semantic_query. Never use cat:baby-food for adult foods with "baby" in the name (baby
+  carrots, baby spinach, baby back ribs).
 - "healthy", "healthier", "nutritious", "good for you" -> healthy true. That is a fixed rule
   (more protein, fewer carbs, little or no added sugar, no trans fat), so add no nutrient
   filters or groups of your own for it; explicit numbers the user gives still go in nutrients.
