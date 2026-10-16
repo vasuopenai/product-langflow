@@ -180,3 +180,15 @@ def test_retailer_tags_and_info_in_postgres(conn):
     assert info["0000000000021"][0]["aisle"] == "Aisle 3"
     conn.execute("DELETE FROM product_tags WHERE kind = 'retailer'")
     conn.commit()
+
+
+def test_retag_adds_missing_category_tags_only(conn):
+    from off_products.pg import retag_categories
+    code = conn.execute("SELECT code FROM products ORDER BY code LIMIT 1").fetchone()[0]
+    conn.execute("UPDATE products SET record = jsonb_set(record, '{name}', '\"Banana Puffs Stage 2\"') WHERE code = %s",
+                 (code,))
+    assert retag_categories(conn, dry_run=True)["cat:baby-food"] >= 1
+    assert retag_categories(conn)["cat:baby-food"] >= 1
+    assert conn.execute("SELECT 1 FROM product_tags WHERE code = %s AND kind = 'category' AND tag = 'cat:baby-food'",
+                        (code,)).fetchone()
+    assert not retag_categories(conn)  # a rerun adds nothing

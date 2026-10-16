@@ -356,6 +356,7 @@ def ingredients(text, name=""):
 
 # Our category ids over USDA's mixed category strings; first matching rule wins.
 CATEGORY_RULES = [
+    ("cat:baby-food", r"baby|infant"),  # USDA's "Baby/Infant Foods/Beverages", "Infant Formula"
     ("cat:nut-seed-butters", r"nut & seed butter"),
     ("cat:snack-bars", r"\bbars?\b"),
     ("cat:ice-cream-frozen-desserts", r"ice cream|frozen dessert|frozen yogurt"),
@@ -406,6 +407,30 @@ SNACK_CATEGORIES = {"cat:snack-bars", "cat:chips-pretzels", "cat:popcorn-nuts-se
                     "cat:cookies", "cat:chocolate", "cat:candy", "cat:other-snacks"}
 CATEGORY_IDS = [cid for cid, _ in CATEGORY_RULES] + ["cat:powders-mixes", "cat:snacks", "cat:other"]
 
+# Most baby food isn't filed under USDA's baby category (pouches sit under fruit drinks, puffs
+# under snacks, cereal under cereal), so it also gets cat:baby-food from its name or brand, on
+# top of its usual category. Without it "baby food" found baby carrots and Baby Bella mushrooms.
+_BABY_NAME = re.compile(
+    r"\bbaby food|\binfant\b|\btoddlers?\b|\bstage [1-4]\b|\b\d{1,2}\s*\+\s*(?:months?|mos?)\b|\b\d{1,2}\s*(?:months?|mos?)\s*(?:\+|and up|& up|old|plus)|\b\d{1,2}\s*m\+|"
+    r"\bbaby (?:cereal|oatmeal|puffs|melts|yogurt melts|snacks?|purees?|biscuits|teethers?|formula|"
+    r"mum-?mums?|crackers|pouch(?:es)?)\b|\bteething\b|\bpureed? (?:for )?(?:baby|babies)\b", re.I)
+_BABY_BRAND = re.compile(
+    r"^(?:gerber|beech-?nut|happy ?baby|happy ?tot|happy ?family|earth'?s best|plum organics|"
+    r"once upon a farm|serenity kids|little spoon|cerebelly|ella'?s kitchen|nurturme|baby gourmet|"
+    r"sprout organics?|sprout foods|lil'? gourmets|yumi|tiny organics|mama bear|parent'?s choice)\b", re.I)
+# Grown-up foods with "baby" in the name.
+_NOT_BABY = re.compile(
+    r"\bbaby (?:carrots?|spinach|bellas?|portobellos?|back|greens|potatoes|corn|kale|arugula|lima|swiss|"
+    r"bok choy|shrimp|clams|octopus|romaine|lettuce|beets|zucchini|squash|eggplant|onions|peppers|"
+    r"tomatoes|cucumbers|dill|gouda|brie|ruth|cakes?|rays|mix|blue|bel)\b", re.I)
+
+
+def is_baby_food(name, brand=None):
+    name = name or ""
+    if _NOT_BABY.search(name) and not re.search(r"\bbaby food\b", name, re.I):
+        return False
+    return bool(_BABY_NAME.search(name) or _BABY_BRAND.search((brand or "").strip()))
+
 # The product itself is a powder or a drink mix ("Whey Protein Powder", "Protein & Greens
 # Drink Mix"), not a food that merely contains one ("Lollipop With Chili Pepper Powder").
 _POWDER_OR_MIX = re.compile(r"\b(?:drink|shake|smoothie|beverage)\s+mix\b|\bpowder$", re.I)
@@ -418,12 +443,16 @@ def is_powder_or_mix(name):
         head.lower().endswith("powder") and _CONTAINS_POWDER.search(head))
 
 
-def categories(usda_category, name=None):
+def categories(usda_category, name=None, brand=None):
     if is_powder_or_mix(name):  # USDA files some of these under Chocolate, Candy, Snacks
-        return ["cat:powders-mixes"]
-    text = (usda_category or "").replace("�", " ")
-    cid = next((cid for cid, rx in _CATEGORY_RULES if rx.search(text)), "cat:other")
-    return [cid, "cat:snacks"] if cid in SNACK_CATEGORIES else [cid]
+        out = ["cat:powders-mixes"]
+    else:
+        text = (usda_category or "").replace("�", " ")
+        cid = next((cid for cid, rx in _CATEGORY_RULES if rx.search(text)), "cat:other")
+        out = [cid, "cat:snacks"] if cid in SNACK_CATEGORIES else [cid]
+    if "cat:baby-food" not in out and is_baby_food(name, brand):
+        out.append("cat:baby-food")
+    return out
 
 
 _NAME_LABELS = [
@@ -616,7 +645,8 @@ def normalize(raw):
         "brand": _display(raw.get("brand_name") or raw.get("brand_owner")),
         "brand_owner": _display(raw.get("brand_owner")),
         "quantity": raw.get("package_weight") or None,
-        "categories": categories(raw.get("branded_food_category"), raw.get("description")),
+        "categories": categories(raw.get("branded_food_category"), raw.get("description"),
+                                 raw.get("brand_name") or raw.get("brand_owner")),
         "main_category": (raw.get("branded_food_category") or "").replace("�", "-").strip() or None,
         "labels": labels,
         "allergens": ing["allergens"] or off.get("allergens", []),
